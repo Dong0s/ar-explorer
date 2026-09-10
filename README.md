@@ -3,7 +3,12 @@
 Mini-jogo de realidade aumentada que roda direto no navegador, sem build e sem
 dependencia instalada (o Three.js vem por CDN). Tudo esta em `index.html`.
 
-## Como rodar
+**Jogue agora:** <https://dong0s.github.io/ar-explorer/>
+
+Esse endereco e https, entao a camera funciona tambem no celular — basta abrir
+o link e tocar em "Iniciar com a camera".
+
+## Como rodar localmente
 
 ```bash
 node ar-game/server.js
@@ -94,9 +99,25 @@ distribuem coisas em circulo.
 
 ## Testar no celular
 
-Como celular nao e `localhost`, o navegador vai bloquear a camera em `http://IP:8080`.
-Duas saidas:
+O jeito mais simples e abrir <https://dong0s.github.io/ar-explorer/> direto no
+celular: e https, entao o navegador libera a camera sem mais nada.
+
+Para testar no celular uma versao **ainda nao publicada**, o servidor local nao
+serve (celular nao e `localhost`, e o navegador bloqueia a camera em
+`http://IP:8080`). Nesse caso:
 
 1. **Tunel https** — `npx localtunnel --port 8080` (ou ngrok) e abrir a URL https no celular.
 2. **Flag do Chrome** — em `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
    adicionar `http://SEU_IP:8080` e reiniciar o navegador.
+
+## Publicar uma alteracao
+
+O site sai do branch `main`, pasta raiz. Entao publicar e so:
+
+```bash
+git add -A
+git commit -m "o que mudou"
+git push
+```
+
+O GitHub Pages reconstroi sozinho em cerca de um minuto.
