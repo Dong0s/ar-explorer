@@ -69,9 +69,12 @@
   #fade.on{opacity:1}
 
   /* ---------- tela inicial ---------- */
-  #start{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:center;
-    align-items:center;gap:14px;padding:24px;text-align:center;
+  #start{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:flex-start;
+    align-items:center;gap:14px;padding:24px;text-align:center;overflow-y:auto;
     background:radial-gradient(120% 80% at 50% 0%,#16324a 0%,#0b0e14 62%)}
+  /* centraliza quando cabe e deixa rolar quando nao cabe - com justify-content:center
+     o topo ficava cortado no celular deitado */
+  #start::before,#start::after{content:'';margin:auto}
   #start h1{margin:0;font-size:clamp(26px,7vw,40px);letter-spacing:-.5px}
   #start h1 span{color:var(--acc)}
   #start p.sub{margin:0;max-width:460px;font-size:14px;line-height:1.6;opacity:.82}
@@ -85,6 +88,17 @@
   .regras div{display:flex;gap:10px;line-height:1.45}
   .regras b.num{color:var(--warn);flex:0 0 18px;text-align:center}
   #erro{color:#ff8f8f;font-size:13px;max-width:430px;min-height:18px;line-height:1.5}
+
+  /* celular deitado: sobra pouca altura, entao tudo encolhe um pouco */
+  @media (max-height:460px){
+    #start{gap:9px;padding:14px}
+    #start h1{font-size:22px}
+    #start p.sub{font-size:12.5px;line-height:1.45}
+    .regras{font-size:12px;gap:5px}
+    .btns{margin-top:2px}
+    button{padding:11px 16px}
+    #semSensor{bottom:calc(70px + var(--pad-b))}
+  }
 </style>
 </head>
 <body>
@@ -126,7 +140,8 @@
     <div><b class="num">4</b><span>Para trocar de cenario, encare uma <b>seta</b> por <b>3 segundos</b>.</span></div>
   </div>
   <div class="btns">
-    <button id="btnJogar" class="primario">Jogar</button>
+    <button id="btnPaisagem" class="primario">Jogar deitado (paisagem)</button>
+    <button id="btnJogar">Jogar em pe</button>
   </div>
   <div id="erro"></div>
 </div>
@@ -1291,18 +1306,27 @@ renderer.setAnimationLoop(()=>{
   renderer.render(cena, camera);
 });
 
-addEventListener('resize', ()=>{
+function ajustaTela(){
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
-});
+}
+addEventListener('resize', ajustaTela);
+
+/* ao virar o celular a largura e a altura demoram um tico para trocar de lugar,
+   entao medimos de novo um pouco depois - senao a imagem fica esticada */
+addEventListener('orientationchange', ()=> setTimeout(ajustaTela, 300));
+if(screen.orientation && screen.orientation.addEventListener){
+  screen.orientation.addEventListener('change', ()=> setTimeout(ajustaTela, 300));
+}
 
 /* =========================================================================
    10. INICIO
    ========================================================================= */
 const telaStart = document.getElementById('start');
 const erroEl    = document.getElementById('erro');
-const btnJogar  = document.getElementById('btnJogar');
+const btnJogar    = document.getElementById('btnJogar');
+const btnPaisagem = document.getElementById('btnPaisagem');
 
 /* O jogo NAO usa a camera. O celular entra so como sensor de movimento:
    o giroscopio gira a cabeca, e o fundo e sempre o cenario montado aqui. */
@@ -1469,6 +1493,36 @@ btnJogar.addEventListener('click', ()=>{
   erroEl.textContent = '';
   pedeSensor();   // sem await: o jogo nao espera a resposta da permissao
   comeca();
+});
+
+/* Paisagem: quando a rotacao automatica do celular esta desligada, a pagina
+   continua desenhada em pe por mais que voce vire o aparelho - e o jogo fica
+   com o horizonte de lado. Tela cheia + travar a orientacao resolve, e e a
+   unica forma de a pagina girar sem depender do ajuste do sistema.
+   Nada disso e esperado com await: o jogo comeca de qualquer jeito. */
+function modoPaisagem(){
+  const el = document.documentElement;
+  let p;
+  try{
+    p = el.requestFullscreen ? el.requestFullscreen()
+      : el.webkitRequestFullscreen ? (el.webkitRequestFullscreen(), null) : null;
+  }catch(e){}
+
+  Promise.resolve(p).catch(()=>{}).then(()=>{
+    if(!(screen.orientation && screen.orientation.lock)) return Promise.reject();
+    return screen.orientation.lock('landscape');
+  }).then(()=> setTimeout(ajustaTela, 300))
+    .catch(()=>{
+      dicaEl.textContent = 'Este navegador nao deixa travar em paisagem - ligue a rotacao ' +
+        'automatica do celular e vire o aparelho';
+    });
+}
+
+btnPaisagem.addEventListener('click', ()=>{
+  erroEl.textContent = '';
+  pedeSensor();
+  comeca();
+  modoPaisagem();   // ainda dentro do clique, que e o que a tela cheia exige
 });
 </script>
 </body>

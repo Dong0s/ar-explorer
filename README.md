@@ -23,8 +23,20 @@ pela rede.
 
 ## Como se joga
 
-Um botao so: **Jogar**. No celular ele pede permissao para os sensores de
-movimento (obrigatorio no iOS); se voce recusar, da para olhar arrastando o dedo.
+Dois botoes: **Jogar deitado (paisagem)** e **Jogar em pe**. Os dois pedem
+permissao para os sensores de movimento (obrigatorio no iOS); se voce recusar,
+da para olhar arrastando o dedo.
+
+O primeiro entra em tela cheia e trava a orientacao em paisagem. Isso importa
+porque, com a rotacao automatica do celular desligada, a pagina continua
+desenhada em pe por mais que voce vire o aparelho — e o jogo fica com o
+horizonte de lado. A tela cheia e a unica forma de a pagina girar sem depender
+do ajuste do sistema. Se o navegador nao deixar travar (o Safari do iOS nao
+deixa), a dica no rodape pede para ligar a rotacao automatica.
+
+Nem todo navegador entrega os sensores: o **Brave** bloqueia por padrao, no
+escudo contra fingerprinting, e navegador aberto dentro de outro app
+(WhatsApp, Instagram) costuma bloquear tambem. No Chrome funciona.
 
 - **Olhar** — gire o celular (giroscopio) ou arraste o mouse no PC.
 - **Andar** — ande de verdade, com o celular na mao: o jogo conta seus passos pelo
