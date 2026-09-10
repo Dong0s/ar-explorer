@@ -38,12 +38,10 @@ Nem todo navegador entrega os sensores: o **Brave** bloqueia por padrao, no
 escudo contra fingerprinting, e navegador aberto dentro de outro app
 (WhatsApp, Instagram) costuma bloquear tambem. No Chrome funciona.
 
-- **Olhar** — gire o celular (giroscopio) ou arraste o mouse no PC.
-- **Andar** — ande de verdade, com o celular na mao: o jogo conta seus passos pelo
-  acelerometro e avanca 0,7 m na direcao em que voce esta olhando. No PC, `W A S D`
-  / setas. A area e um circulo de 2,5 m de raio, marcado no chao; voce nao consegue
-  sair dele.
-  O joystick de toque so aparece se o acelerometro do aparelho nao responder.
+- **Olhar** — gire o celular (giroscopio) ou arraste o mouse no PC. **Nao da para
+  andar**: voce fica parado no centro do circulo marcado no chao e gira para
+  observar o que esta em volta. Os objetos e as setas ficam todos ao alcance do
+  olhar, a cerca de 2 m.
 - **Observar um objeto** — deixe a mira central sobre ele por ~1,2 s. O anel verde
   fecha, o nome aparece e o contador sobe.
 - **Trocar de cenario** — encare uma das setas laterais por **3 segundos**
@@ -54,26 +52,22 @@ escudo contra fingerprinting, e navegador aberto dentro de outro app
 Tudo que da pra ajustar rapido esta no topo do `<script type="module">`:
 
 ```js
-const RAIO_AREA  = 2.5;    // tamanho da area caminhavel, em metros
+const RAIO_AREA  = 2.5;    // raio (m) do circulo marcado no chao
 const DWELL_OBJ  = 1200;   // ms encarando um objeto para observa-lo
 const DWELL_SETA = 3000;   // ms encarando a seta para trocar de area
-const VELOCIDADE = 1.4;    // m/s do joystick e do W A S D
-
-const PASSO        = .7;   // metros que cada passo detectado anda
-const LIMIAR_PASSO = 1.2;  // m/s2 acima do repouso para contar um passo
-const PAUSA_PASSO  = 300;  // ms minimos entre dois passos
 ```
 
-`LIMIAR_PASSO` e o botao a girar se a contagem sair errada: **suba** se o jogo
-andar sozinho com o celular parado na mao, **desca** se ele perder passos.
+`RAIO_AREA` nao e mais um limite de caminhada — como o jogador fica parado, ele
+so define o tamanho do circulo desenhado no chao. Os objetos sao espalhados a
+1,9 e 2,4 m do centro, na secao que monta a area.
 
 ## Se o celular nao responder
 
 Abra o jogo com `?diag=1` no fim do endereco —
 <https://dong0s.github.io/ar-explorer/?diag=1> — e um painel no canto mostra qual
-fonte de sensor esta em uso, quantas leituras chegaram, os angulos crus, quantos
-passos foram contados e o estado da permissao. E por ali que da para saber se o
-problema e permissao, falta de sensor ou o limiar dos passos.
+fonte de sensor esta em uso, quantas leituras chegaram, os angulos crus e o
+estado da permissao — com um botao que copia tudo. O mesmo painel abre pelo botao
+"Ver diagnostico", que aparece na tela quando nenhum sensor responde.
 
 Para a orientacao o jogo tenta quatro caminhos, e basta um responder:
 `deviceorientation`, `deviceorientationabsolute`, `RelativeOrientationSensor` e
