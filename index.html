@@ -1262,24 +1262,28 @@ const btnJogar  = document.getElementById('btnJogar');
    o giroscopio gira a cabeca, e o fundo e sempre o cenario montado aqui. */
 let permissaoSensor = '-';
 
-async function pedeSensor(){
+function pedeSensor(){
   /* O iOS so entrega os sensores depois de um pedido feito dentro do clique -
-     e os dois pedidos precisam sair antes do primeiro await, senao o segundo
-     ja esta fora do gesto do usuario e falha. */
+     e os dois pedidos precisam sair juntos, ainda dentro do gesto.
+
+     Nada aqui e esperado com await: ha navegador em que essa promessa nunca
+     se resolve, e esperar por ela deixaria o jogo preso na tela inicial. Os
+     ouvintes entram na hora; se a permissao chegar depois, os eventos comecam
+     a pingar sozinhos. */
   const pedidos = [];
   const temPerm = o => typeof o !== 'undefined' && typeof o.requestPermission === 'function';
   if(temPerm(window.DeviceOrientationEvent)) pedidos.push(DeviceOrientationEvent.requestPermission());
   if(temPerm(window.DeviceMotionEvent))      pedidos.push(DeviceMotionEvent.requestPermission());
 
   if(pedidos.length){
-    try{
-      const r = await Promise.all(pedidos.map(p => p.catch(e => 'erro: ' + e.name)));
-      permissaoSensor = r.join(' / ');
-      if(r.some(x => x !== 'granted')){
-        erroEl.textContent = 'Sem permissao para os sensores de movimento: da para jogar ' +
-          'arrastando o dedo na tela para olhar.';
-      }
-    }catch(e){ permissaoSensor = 'erro: ' + e.name; }
+    permissaoSensor = 'pedindo...';
+    Promise.all(pedidos.map(p => Promise.resolve(p).catch(e => 'erro: ' + e.name)))
+      .then(r=>{
+        permissaoSensor = r.join(' / ');
+        if(r.some(x => x !== 'granted') && !usaSensor){
+          dicaEl.textContent = 'Sem permissao para os sensores - arraste o dedo na tela para olhar';
+        }
+      });
   }
 
   /* varios Androids disparam so o "absolute"; o iOS so o outro. Ouvimos os dois. */
@@ -1347,9 +1351,9 @@ function comeca(){
   bip(560, .1);
 }
 
-btnJogar.addEventListener('click', async ()=>{
+btnJogar.addEventListener('click', ()=>{
   erroEl.textContent = '';
-  await pedeSensor();
+  pedeSensor();   // sem await: o jogo nao espera a resposta da permissao
   comeca();
 });
 </script>
