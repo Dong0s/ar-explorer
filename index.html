@@ -56,6 +56,14 @@
     background:rgba(255,255,255,.28);border:1px solid rgba(255,255,255,.35)}
   body.semPassos #stick{display:block}
 
+  /* aviso de sensor mudo, com os botoes de socorro */
+  #semSensor{position:absolute;left:50%;bottom:calc(156px + var(--pad-b));transform:translateX(-50%);
+    width:min(370px,90vw);background:rgba(11,14,20,.88);backdrop-filter:blur(10px);
+    border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:12px 14px;
+    pointer-events:auto;text-align:center}
+  #semSensor p{margin:0 0 10px;font-size:12.5px;line-height:1.5;opacity:.9}
+  #semSensor button{font-size:13px;padding:9px 13px;margin:3px}
+
   /* fade de transicao entre areas */
   #fade{position:fixed;inset:0;z-index:8;background:#000;opacity:0;pointer-events:none;transition:opacity .35s}
   #fade.on{opacity:1}
@@ -96,6 +104,13 @@
   <div id="info"><h3></h3><p></p></div>
   <div id="dica"></div>
   <div id="stick"><i></i></div>
+
+  <div id="semSensor" hidden>
+    <p></p>
+    <button id="btnSensor">Ativar sensores</button>
+    <button id="btnDiag">Ver diagnostico</button>
+    <button id="btnFecharSensor">Fechar</button>
+  </div>
 </div>
 
 <div id="fade"></div>
@@ -1328,7 +1343,10 @@ function pedeSensor(){
 /* Vigia: em vez de um aviso unico disparado uma vez e nunca mais revisto - que
    ficava mentindo na tela se o sensor acordasse depois -, olha o estado a cada
    segundo durante meio minuto e ajusta o que precisa. */
+let vigiando = false;
 function vigiaSensores(){
+  if(vigiando) return;          // o botao "Ativar sensores" chama de novo
+  vigiando = true;
   const t0 = performance.now();
   let tentouGenerico = false;
   const id = setInterval(()=>{
@@ -1342,10 +1360,18 @@ function vigiaSensores(){
       sensorDeQuaternion();
     }
 
+    if(usaSensor) boxSensor.hidden = true;
+
     if(toque && t > 3000){
       /* sem acelerometro (ou com ele travado) nao ha passo: devolve o joystick */
       if(!temMovimento || (t > 8000 && oscMax <= .2)) document.body.classList.add('semPassos');
       if(!usaSensor) document.body.classList.add('semPassos');
+
+      if(!usaSensor && boxSensor.hidden && !caixaFechada){
+        boxSensor.hidden = false;
+        txtSensor.textContent = 'O navegador nao esta entregando os sensores deste aparelho. ' +
+          'Toque em "Ativar sensores" para pedir de novo.';
+      }
 
       dicaEl.textContent = !usaSensor
         ? 'Sem giroscopio aqui - arraste o dedo para olhar' +
@@ -1360,15 +1386,30 @@ function vigiaSensores(){
 }
 
 /* Diagnostico: abra a pagina com ?diag=1 para ver o que o aparelho responde. */
-if((location.search + location.hash).indexOf('diag') >= 0){
-  const d = document.createElement('div');
-  d.style.cssText = 'position:fixed;left:8px;top:8px;z-index:20;background:rgba(0,0,0,.75);' +
+let painelDiag = null;
+function criaDiag(){
+  if(painelDiag) return;
+  painelDiag = document.createElement('div');
+  painelDiag.style.cssText = 'position:fixed;left:8px;top:8px;z-index:20;background:rgba(0,0,0,.8);' +
     'color:#8ef;font:11px/1.5 monospace;padding:8px 10px;border-radius:8px;max-width:78vw;' +
     'pointer-events:none;white-space:pre';
-  document.body.appendChild(d);
+  const texto = document.createElement('div');
+  const copiar = document.createElement('button');
+  copiar.textContent = 'copiar';
+  copiar.style.cssText = 'pointer-events:auto;margin-top:8px;font-size:11px;padding:6px 12px';
+  copiar.addEventListener('click', ()=>{
+    const t = texto.textContent + '\nnavegador ' + navigator.userAgent;
+    const feito = ()=> copiar.textContent = 'copiado!';
+    if(navigator.clipboard) navigator.clipboard.writeText(t).then(feito, ()=> copiar.textContent = 'copie a mao');
+    else copiar.textContent = 'copie a mao';
+  });
+  painelDiag.appendChild(texto);
+  painelDiag.appendChild(copiar);
+  document.body.appendChild(painelDiag);
+
   setInterval(()=>{
     const q = modoQuat ? [...qDev.toArray()].map(v=>v.toFixed(2)).join(' ') : '-';
-    d.textContent =
+    texto.textContent =
       'fonte    ' + (fonteSensor || 'nenhuma') + ' (nivel ' + nivelFonte + ')\n' +
       'leituras ' + leituras + '\n' +
       'eventos  orient ' + vistos.deviceorientation +
@@ -1385,6 +1426,33 @@ if((location.search + location.hash).indexOf('diag') >= 0){
       'https ' + isSecureContext + '   tela ' + ((screen.orientation && screen.orientation.angle) || 0) + 'graus';
   }, 250);
 }
+if((location.search + location.hash).indexOf('diag') >= 0) criaDiag();
+
+/* Socorro na tela quando nenhum sensor responde: um botao pede a permissao de
+   novo (clique novo = gesto novo, e ha navegador que so pergunta assim) e o
+   outro abre o diagnostico, para dar para copiar e mandar. */
+const boxSensor = document.getElementById('semSensor');
+const txtSensor = boxSensor.querySelector('p');
+
+document.getElementById('btnSensor').addEventListener('click', ()=>{
+  txtSensor.textContent = 'Pedindo de novo...';
+  pedeSensor();
+  setTimeout(()=>{
+    if(usaSensor){ boxSensor.hidden = true; return; }
+    txtSensor.textContent = 'Ainda nada (permissao: ' + permissaoSensor + '). Abra o site direto no ' +
+      'Chrome - nao dentro de outro app - e libere "Sensores de movimento" nas permissoes do site. ' +
+      'Enquanto isso da para olhar arrastando o dedo.';
+  }, 2500);
+});
+
+document.getElementById('btnDiag').addEventListener('click', criaDiag);
+
+/* fechada a mao, a caixa nao volta: quem fechou ja sabe do problema */
+let caixaFechada = false;
+document.getElementById('btnFecharSensor').addEventListener('click', ()=>{
+  caixaFechada = true;
+  boxSensor.hidden = true;
+});
 
 function comeca(){
   telaStart.style.display = 'none';
