@@ -1,0 +1,1222 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>AR Explorer</title>
+<style>
+  :root{
+    --bg:#0b0e14; --fg:#eef2f7; --acc:#4dd4ac; --warn:#ffcf5c;
+    --pad-t: env(safe-area-inset-top, 0px);
+    --pad-b: env(safe-area-inset-bottom, 0px);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;user-select:none}
+
+  /* video da camera fica atras de tudo */
+  #cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000}
+  canvas{position:fixed;inset:0;z-index:1}
+
+  /* ---------- HUD ---------- */
+  #hud{position:fixed;inset:0;z-index:5;pointer-events:none}
+
+  #topo{position:absolute;top:calc(10px + var(--pad-t));left:50%;transform:translateX(-50%);
+    display:flex;gap:8px;align-items:center;white-space:nowrap}
+  .chip{background:rgba(11,14,20,.62);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.14);
+    border-radius:999px;padding:7px 14px;font-size:13px;font-weight:600;letter-spacing:.2px}
+  .chip b{color:var(--acc)}
+
+  /* mira central com anel de progresso */
+  #mira{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:64px;height:64px;
+    opacity:.75;transition:opacity .2s}
+  #mira.ativa{opacity:1}
+  #mira circle{fill:none;stroke-linecap:round}
+  .anelBase{stroke:rgba(255,255,255,.35);stroke-width:3}
+  .anelProg{stroke:var(--acc);stroke-width:4;transform:rotate(-90deg);transform-origin:32px 32px;
+    stroke-dasharray:138.2;stroke-dashoffset:138.2;transition:stroke-dashoffset .06s linear}
+  #mira.seta .anelProg{stroke:var(--warn)}
+  .ponto{fill:#fff}
+
+  /* cartao de informacao do objeto observado */
+  #info{position:absolute;left:50%;bottom:calc(120px + var(--pad-b));transform:translateX(-50%) translateY(10px);
+    width:min(440px,86vw);background:rgba(11,14,20,.78);backdrop-filter:blur(10px);
+    border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:12px 16px;
+    opacity:0;transition:opacity .25s,transform .25s}
+  #info.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  #info h3{margin:0 0 4px;font-size:16px;color:var(--acc)}
+  #info p{margin:0;font-size:13px;line-height:1.45;opacity:.88}
+
+  #dica{position:absolute;left:50%;bottom:calc(14px + var(--pad-b));transform:translateX(-50%);
+    font-size:11.5px;opacity:.6;text-align:center;width:92vw}
+
+  /* joystick de movimento (toque) */
+  #stick{position:absolute;left:calc(18px + env(safe-area-inset-left,0px));bottom:calc(24px + var(--pad-b));
+    width:118px;height:118px;border-radius:50%;background:rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.18);pointer-events:auto;touch-action:none;display:none}
+  #stick i{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;
+    background:rgba(255,255,255,.28);border:1px solid rgba(255,255,255,.35)}
+  body.toque #stick{display:block}
+
+  /* fade de transicao entre areas */
+  #fade{position:fixed;inset:0;z-index:8;background:#000;opacity:0;pointer-events:none;transition:opacity .35s}
+  #fade.on{opacity:1}
+
+  /* ---------- tela inicial ---------- */
+  #start{position:fixed;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:center;
+    align-items:center;gap:14px;padding:24px;text-align:center;
+    background:radial-gradient(120% 80% at 50% 0%,#16324a 0%,#0b0e14 62%)}
+  #start h1{margin:0;font-size:clamp(26px,7vw,40px);letter-spacing:-.5px}
+  #start h1 span{color:var(--acc)}
+  #start p.sub{margin:0;max-width:460px;font-size:14px;line-height:1.6;opacity:.82}
+  .btns{display:flex;flex-direction:column;gap:10px;margin-top:8px;width:min(320px,84vw)}
+  button{font:inherit;font-weight:600;font-size:15px;padding:14px 18px;border-radius:14px;cursor:pointer;
+    border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:var(--fg);transition:.15s}
+  button:hover{background:rgba(255,255,255,.16)}
+  button.primario{background:var(--acc);color:#062018;border-color:transparent}
+  button.primario:hover{filter:brightness(1.08)}
+  .regras{display:grid;gap:8px;text-align:left;max-width:430px;font-size:13px;opacity:.85;margin-top:4px}
+  .regras div{display:flex;gap:10px;line-height:1.45}
+  .regras b.num{color:var(--warn);flex:0 0 18px;text-align:center}
+  #erro{color:#ff8f8f;font-size:13px;max-width:430px;min-height:18px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<video id="cam" playsinline muted autoplay></video>
+
+<div id="hud">
+  <div id="topo">
+    <div class="chip" id="chipArea">Area</div>
+    <div class="chip" id="chipPts">Observados <b>0/5</b></div>
+  </div>
+
+  <svg id="mira" viewBox="0 0 64 64">
+    <circle class="anelBase" cx="32" cy="32" r="22"></circle>
+    <circle class="anelProg" cx="32" cy="32" r="22"></circle>
+    <circle class="ponto" cx="32" cy="32" r="2.5"></circle>
+  </svg>
+
+  <div id="info"><h3></h3><p></p></div>
+  <div id="dica"></div>
+  <div id="stick"><i></i></div>
+</div>
+
+<div id="fade"></div>
+
+<div id="start">
+  <h1>AR <span>Explorer</span></h1>
+  <p class="sub">Um mini-jogo de realidade aumentada. Olhe ao redor pela camera, ande pela area
+     e descubra os objetos escondidos em cada cenario.</p>
+  <div class="regras">
+    <div><b class="num">1</b><span>Aponte a mira (o circulo no centro da tela) para um objeto e segure por ~1,2s para observa-lo.</span></div>
+    <div><b class="num">2</b><span>Ande pela area: joystick no canto (celular) ou <b>W A S D</b> (PC).</span></div>
+    <div><b class="num">3</b><span>Para trocar de cenario, encare uma <b>seta</b> por <b>3 segundos</b>.</span></div>
+  </div>
+  <div class="btns">
+    <button id="btnXR" class="primario" style="display:none">Iniciar em AR real (WebXR)</button>
+    <button id="btnCam" class="primario">Iniciar com a camera</button>
+    <button id="btnSem">Jogar sem camera (modo teste)</button>
+  </div>
+  <div id="erro"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js" } }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* =========================================================================
+   1. CONFIGURACAO
+   ========================================================================= */
+const RAIO_AREA  = 2.5;    // raio (m) da area caminhavel
+const DWELL_OBJ  = 1200;   // ms encarando um objeto para observa-lo
+const DWELL_SETA = 3000;   // ms encarando a seta para trocar de area
+const VELOCIDADE = 1.4;    // m/s
+
+/* Cada objeto e montado com pecas primitivas:
+   g = geometria, a = argumentos, p = posicao local, c = cor, r = rotacao, e = escala */
+const AREAS = [
+  {
+    nome:'Jardim', cor:0x7fe38a, luz:0xbfe9c8,
+    cenario:'jardim', ceu:[0x6fbcf0, 0xdaf0b6], sol:[0xfff2d8, 2.2], amb:1.8, chao:0x2f6b38,
+    objetos:[
+      { nome:'Cogumelo', desc:'Cresce na sombra das arvores. Nao e comestivel, mas brilha um pouco a noite.',
+        partes:[{g:'cyl',a:[.06,.08,.3,12],p:[0,.15,0],c:0xf3e9d6},
+                {g:'sph',a:[.22,18,12],p:[0,.32,0],c:0xe0544a,e:[1,.62,1]}] },
+      { nome:'Arvore', desc:'A mais velha do jardim. Dizem que suas raizes chegam ate a area do museu.',
+        partes:[{g:'cyl',a:[.09,.12,.9,10],p:[0,.45,0],c:0x7a5230},
+                {g:'sph',a:[.48,16,12],p:[0,1.15,0],c:0x3f9c54},
+                {g:'sph',a:[.3,14,10],p:[.28,.92,.15],c:0x4bb063}] },
+      { nome:'Pedra Musgosa', desc:'Uma rocha coberta de musgo. Esta aqui ha mais tempo que o proprio jardim.',
+        partes:[{g:'dod',a:[.32,0],p:[0,.2,0],c:0x8b9098,e:[1,.7,1.1]},
+                {g:'sph',a:[.14,10,8],p:[.1,.36,.08],c:0x5da35e,e:[1,.4,1]}] },
+      { nome:'Flor Solar', desc:'Gira lentamente acompanhando qualquer fonte de luz, inclusive voce.',
+        partes:[{g:'cyl',a:[.02,.02,.6,8],p:[0,.3,0],c:0x4f9b4a},
+                {g:'tor',a:[.14,.05,8,16],p:[0,.62,0],c:0xffc93c},
+                {g:'sph',a:[.09,12,10],p:[0,.62,0],c:0x6b4a1e}] },
+      { nome:'Banco de Praca', desc:'Alguem esqueceu um livro aqui. As paginas estao todas em branco.',
+        partes:[{g:'box',a:[.9,.06,.34],p:[0,.42,0],c:0x9a6b3f},
+                {g:'box',a:[.9,.34,.06],p:[0,.6,-.15],c:0x9a6b3f},
+                {g:'box',a:[.06,.42,.3],p:[-.38,.21,0],c:0x4a4f57},
+                {g:'box',a:[.06,.42,.3],p:[.38,.21,0],c:0x4a4f57}] }
+    ]
+  },
+  {
+    nome:'Museu', cor:0xf0d9a8, luz:0xf6e7c6,
+    cenario:'museu', ceu:[0xf2e6cd, 0x8a7350], sol:[0xffe9c4, 1.9], amb:1.5, chao:0xcfc6b2,
+    objetos:[
+      { nome:'Vaso Antigo', desc:'Ceramica de mais de 2000 anos. A etiqueta diz apenas: "origem desconhecida".',
+        partes:[{g:'cyl',a:[.16,.1,.42,16],p:[0,.21,0],c:0xd98b4a},
+                {g:'tor',a:[.16,.03,8,16],p:[0,.42,0],c:0xb56f36},
+                {g:'cyl',a:[.22,.22,.06,16],p:[0,.03,0],c:0x3b3f46}] },
+      { nome:'Estatua', desc:'O rosto foi apagado pelo tempo. Ninguem sabe mais quem ela representava.',
+        partes:[{g:'box',a:[.44,.14,.44],p:[0,.07,0],c:0x5a5f68},
+                {g:'cyl',a:[.13,.17,.72,14],p:[0,.5,0],c:0xdcd6c8},
+                {g:'sph',a:[.13,16,12],p:[0,.96,0],c:0xdcd6c8}] },
+      { nome:'Quadro', desc:'Uma paisagem que parece mudar quando voce nao esta olhando para ela.',
+        partes:[{g:'box',a:[.72,.56,.05],p:[0,1.25,0],c:0xb08341},
+                {g:'box',a:[.62,.46,.06],p:[0,1.25,.01],c:0x2f5f7a},
+                {g:'sph',a:[.09,12,10],p:[.15,1.36,.05],c:0xffe08a}] },
+      { nome:'Coluna', desc:'Sustentava o teto do salao original. Hoje sustenta apenas a propria historia.',
+        partes:[{g:'cyl',a:[.15,.15,1.3,16],p:[0,.65,0],c:0xe6e0d2},
+                {g:'box',a:[.4,.1,.4],p:[0,1.35,0],c:0xd6cfbe},
+                {g:'box',a:[.4,.1,.4],p:[0,.05,0],c:0xd6cfbe}] },
+      { nome:'Relogio Parado', desc:'Marca 3h47 desde sempre. O mecanismo interno esta perfeitamente intacto.',
+        partes:[{g:'cyl',a:[.28,.28,.08,24],p:[0,1.1,0],c:0x8a6a3a,r:[1.5708,0,0]},
+                {g:'cyl',a:[.23,.23,.02,24],p:[0,1.1,.05],c:0xf5f0e4,r:[1.5708,0,0]},
+                {g:'box',a:[.02,.16,.02],p:[0,1.16,.07],c:0x22262c}] }
+    ]
+  },
+  {
+    nome:'Laboratorio', cor:0x8fd4ff, luz:0xcfe9ff,
+    cenario:'lab', ceu:[0x0d2a3c, 0x050d16], sol:[0xd0f4ff, 1.5], amb:0.8, chao:0x16222c,
+    objetos:[
+      { nome:'Tubo de Ensaio', desc:'O liquido la dentro reage a sua presenca. Melhor nao encostar.',
+        partes:[{g:'cyl',a:[.07,.07,.34,14],p:[0,.5,0],c:0xbfe8f5},
+                {g:'cyl',a:[.06,.06,.16,14],p:[0,.42,0],c:0x39d98a},
+                {g:'box',a:[.22,.04,.14],p:[0,.32,0],c:0x3a4048},
+                {g:'cyl',a:[.02,.02,.36,8],p:[0,.5,-.06],c:0x6a7280}] },
+      { nome:'Cristal Instavel', desc:'Emite uma frequencia baixa e constante. E ela esta aumentando.',
+        partes:[{g:'oct',a:[.3,0],p:[0,.7,0],c:0x7be0ff,e:[.7,1.3,.7]},
+                {g:'oct',a:[.13,0],p:[.22,.42,.1],c:0x9ceaff}] },
+      { nome:'Robo Auxiliar', desc:'Modelo descontinuado. Continua ligado por conta propria ha seis anos.',
+        partes:[{g:'box',a:[.34,.42,.26],p:[0,.5,0],c:0xc9d2dc},
+                {g:'sph',a:[.16,16,12],p:[0,.82,0],c:0xe6edf5},
+                {g:'sph',a:[.05,10,8],p:[.07,.84,.14],c:0x39d98a},
+                {g:'sph',a:[.05,10,8],p:[-.07,.84,.14],c:0x39d98a},
+                {g:'cyl',a:[.05,.05,.34,10],p:[.23,.5,0],c:0x8d97a3},
+                {g:'cyl',a:[.05,.05,.34,10],p:[-.23,.5,0],c:0x8d97a3}] },
+      { nome:'Bobina de Tesla', desc:'Descarrega a cada 40 segundos. Voce acabou de perder uma descarga.',
+        partes:[{g:'cyl',a:[.2,.24,.14,16],p:[0,.07,0],c:0x4a5058},
+                {g:'cyl',a:[.07,.07,.7,12],p:[0,.48,0],c:0xb98a4a},
+                {g:'tor',a:[.19,.06,10,20],p:[0,.86,0],c:0xd8d2c4}] },
+      { nome:'Microscopio', desc:'Ha uma lamina esquecida embaixo da lente. Algo nela ainda se move.',
+        partes:[{g:'box',a:[.3,.06,.24],p:[0,.35,0],c:0x3a4048},
+                {g:'cyl',a:[.04,.04,.42,10],p:[0,.58,-.08],c:0x6a7280},
+                {g:'cyl',a:[.06,.06,.24,12],p:[0,.72,.02],c:0x9aa3ae,r:[.35,0,0]},
+                {g:'con',a:[.05,.1,12],p:[0,.52,.08],c:0x8d97a3}] }
+    ]
+  },
+  {
+    nome:'Espaco', cor:0xc7b6ff, luz:0xd8d0ff,
+    cenario:'espaco', ceu:[0x090b1a, 0x02030a], sol:[0xe8e4ff, 1.8], amb:0.7, chao:0x2a2f42,
+    objetos:[
+      { nome:'Planeta Anelado', desc:'Gasoso, com 62 luas. A atmosfera e rosa por causa de cristais suspensos.',
+        partes:[{g:'sph',a:[.38,24,18],p:[0,1.1,0],c:0xd98ab0},
+                {g:'tor',a:[.62,.04,10,32],p:[0,1.1,0],c:0xf0dca8,r:[1.25,0,.3]}] },
+      { nome:'Foguete', desc:'Capsula de retorno, modelo antigo. Nunca chegou ao destino previsto.',
+        partes:[{g:'cyl',a:[.16,.16,.7,16],p:[0,.6,0],c:0xe9eef4},
+                {g:'con',a:[.16,.32,16],p:[0,1.11,0],c:0xe0544a},
+                {g:'box',a:[.04,.24,.22],p:[.16,.35,0],c:0xe0544a},
+                {g:'box',a:[.04,.24,.22],p:[-.16,.35,0],c:0xe0544a},
+                {g:'con',a:[.13,.2,16],p:[0,.15,0],c:0x6a7280}] },
+      { nome:'Satelite', desc:'Ainda transmitindo. O sinal repete sempre a mesma sequencia de sete numeros.',
+        partes:[{g:'box',a:[.28,.28,.34],p:[0,1.2,0],c:0xb9c2cc},
+                {g:'box',a:[.5,.02,.3],p:[.42,1.2,0],c:0x2f6fd0},
+                {g:'box',a:[.5,.02,.3],p:[-.42,1.2,0],c:0x2f6fd0},
+                {g:'cyl',a:[.02,.02,.3,8],p:[0,1.45,0],c:0x8d97a3}] },
+      { nome:'Asteroide', desc:'Rico em metal raro. Vale mais que o continente inteiro onde voce esta.',
+        partes:[{g:'dod',a:[.34,0],p:[0,.9,0],c:0x7a7f88,e:[1.2,.9,1]},
+                {g:'dod',a:[.14,0],p:[.3,.72,.12],c:0x676c74}] },
+      { nome:'Estrela Fria', desc:'Uma ana branca no fim da vida. Daqui a pouco ela nao estara mais aqui.',
+        partes:[{g:'oct',a:[.26,0],p:[0,1.35,0],c:0xfff2b8},
+                {g:'oct',a:[.26,0],p:[0,1.35,0],c:0xfff2b8,r:[.78,.78,0]},
+                {g:'sph',a:[.14,16,12],p:[0,1.35,0],c:0xffffff}] }
+    ]
+  }
+];
+
+/* =========================================================================
+   2. CENA
+   ========================================================================= */
+const cena   = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, .05, 100);
+const rig    = new THREE.Group();   // "corpo" do jogador: e ele que anda
+rig.add(camera);
+cena.add(rig);
+
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x404050, 2.0);
+cena.add(hemi);
+const sol = new THREE.DirectionalLight(0xffffff, 1.6);
+sol.position.set(2, 4, 2);
+cena.add(sol);
+
+/* chao: anel que marca o limite da area caminhavel */
+const grupoArea = new THREE.Group();
+cena.add(grupoArea);
+const limite = new THREE.Mesh(
+  new THREE.RingGeometry(RAIO_AREA - .04, RAIO_AREA, 64),
+  new THREE.MeshBasicMaterial({color:0x4dd4ac, transparent:true, opacity:.5, side:THREE.DoubleSide})
+);
+limite.rotation.x = -Math.PI/2;
+limite.position.y = .01;
+grupoArea.add(limite);
+const grade = new THREE.GridHelper(RAIO_AREA*2, 10, 0x4dd4ac, 0x33566a);
+grade.material.transparent = true;
+grade.material.opacity = .22;
+grupoArea.add(grade);
+
+/* piso circular da area, colorido por cenario */
+const piso = new THREE.Mesh(
+  new THREE.CircleGeometry(RAIO_AREA, 64),
+  new THREE.MeshStandardMaterial({color:0x2f6b38, roughness:.9, transparent:true, opacity:.45})
+);
+piso.rotation.x = -Math.PI/2;
+grupoArea.add(piso);
+
+/* =========================================================================
+   3. CONSTRUCAO DOS OBJETOS
+   ========================================================================= */
+function geo(g, a){
+  switch(g){
+    case 'box': return new THREE.BoxGeometry(...a);
+    case 'sph': return new THREE.SphereGeometry(...a);
+    case 'cyl': return new THREE.CylinderGeometry(...a);
+    case 'con': return new THREE.ConeGeometry(...a);
+    case 'tor': return new THREE.TorusGeometry(...a);
+    case 'oct': return new THREE.OctahedronGeometry(...a);
+    case 'dod': return new THREE.DodecahedronGeometry(...a);
+  }
+}
+
+function montaObjeto(def){
+  const g = new THREE.Group();
+  for(const p of def.partes){
+    const m = new THREE.Mesh(
+      geo(p.g, p.a),
+      new THREE.MeshStandardMaterial({color:p.c, roughness:.55, metalness:.12, emissive:0x000000})
+    );
+    m.position.set(...p.p);
+    if(p.r) m.rotation.set(...p.r);
+    if(p.e) m.scale.set(...p.e);
+    g.add(m);
+  }
+  return g;
+}
+
+/* etiqueta de texto (sprite desenhado num canvas) */
+function etiqueta(texto, cor){
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = 'rgba(11,14,20,.78)';
+  x.beginPath();
+  if(x.roundRect) x.roundRect(6, 26, 500, 76, 38); else x.rect(6, 26, 500, 76);
+  x.fill();
+  x.strokeStyle = 'rgba(255,255,255,.22)'; x.lineWidth = 3; x.stroke();
+  x.font = 'bold 44px system-ui, sans-serif';
+  x.fillStyle = cor || '#eef2f7';
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(texto, 256, 65);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({map:t, transparent:true, depthTest:false}));
+  s.scale.set(.86, .215, 1);
+  s.renderOrder = 10;
+  s.raycast = function(){};   // a etiqueta nunca e alvo da mira
+  return s;
+}
+
+/* seta de troca de area */
+function montaSeta(paraDireita, cor){
+  const f = new THREE.Shape();
+  f.moveTo(.55, 0); f.lineTo(.12, .44); f.lineTo(.12, .18); f.lineTo(-.55, .18);
+  f.lineTo(-.55, -.18); f.lineTo(.12, -.18); f.lineTo(.12, -.44); f.closePath();
+  const m = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(f, {depth:.1, bevelEnabled:true, bevelSize:.02, bevelThickness:.02, bevelSegments:2}),
+    new THREE.MeshStandardMaterial({color:cor, roughness:.35, metalness:.3})
+  );
+  if(!paraDireita) m.rotation.z = Math.PI;
+  const g = new THREE.Group();
+  g.add(m);
+  /* aro que pulsa enquanto voce encara a seta */
+  const aro = new THREE.Mesh(
+    new THREE.RingGeometry(.72, .78, 40),
+    new THREE.MeshBasicMaterial({color:cor, transparent:true, opacity:.28, side:THREE.DoubleSide})
+  );
+  aro.position.z = -.08;
+  g.add(aro);
+  g.userData.aro = aro;
+  return g;
+}
+
+/* =========================================================================
+   3B. CENARIO - o mundo em volta da area caminhavel
+   Nada aqui e interativo, e so ambientacao. As estruturas grandes ficam
+   translucidas para nao tapar a imagem da camera no modo AR.
+   ========================================================================= */
+const cenario = new THREE.Group();
+cena.add(cenario);
+
+let animados   = [];      // pecas do cenario que giram ou flutuam
+let particulas = null;    // poeira / polen / faiscas / estrelas
+let semCamera  = false;   // modo teste: so aí o domo do ceu aparece
+
+/* pseudo-aleatorio estavel: a mesma semente gera sempre o mesmo cenario */
+function rnd(s){ const x = Math.sin(s * 127.1) * 43758.5453; return x - Math.floor(x); }
+
+function mat(cor, extra){
+  return new THREE.MeshStandardMaterial(
+    Object.assign({color:cor, roughness:.8, metalness:.05}, extra || {}));
+}
+
+/* As setas ficam em +X e -X. Esta funcao diz se um angulo esta longe delas,
+   para o cenario nao nascer na frente da seta e esconde-la. */
+function livre(a){
+  const d = Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+  return d > .45 && d < Math.PI - .45;
+}
+
+/* cria uma malha, posiciona e ja pendura no cenario */
+function poe(geometria, material, x, y, z, rotY){
+  const m = new THREE.Mesh(geometria, material);
+  m.position.set(x, y, z);
+  if(rotY !== undefined) m.rotation.y = rotY;
+  cenario.add(m);
+  return m;
+}
+
+/* --- domo de ceu com degrade (so no modo sem camera) --- */
+function montaDomo(topo, baixo){
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 256;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 0, 256);
+  const hex = v => '#' + v.toString(16).padStart(6, '0');
+  g.addColorStop(0, hex(topo));
+  g.addColorStop(1, hex(baixo));
+  x.fillStyle = g;
+  x.fillRect(0, 0, 4, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  const d = new THREE.Mesh(
+    new THREE.SphereGeometry(45, 24, 16),
+    new THREE.MeshBasicMaterial({map:t, side:THREE.BackSide, depthWrite:false})
+  );
+  d.renderOrder = -1;
+  return d;
+}
+
+/* --- particulas do ar --- */
+const TEX_PONTO = (()=>{
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(16, 16, 0, 16, 16, 16);
+  g.addColorStop(0,  'rgba(255,255,255,1)');
+  g.addColorStop(.4, 'rgba(255,255,255,.5)');
+  g.addColorStop(1,  'rgba(255,255,255,0)');
+  x.fillStyle = g;
+  x.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+})();
+
+function montaParticulas(n, raio, yMin, yMax, cor, tam, subida){
+  const pos = new Float32Array(n * 3);
+  const vel = new Float32Array(n);
+  for(let i = 0; i < n; i++){
+    const a = rnd(i * 3.1) * Math.PI * 2;
+    const r = Math.sqrt(rnd(i * 7.7)) * raio;
+    pos[i*3]     = Math.cos(a) * r;
+    pos[i*3 + 1] = yMin + rnd(i * 5.3) * (yMax - yMin);
+    pos[i*3 + 2] = Math.sin(a) * r;
+    vel[i] = .3 + rnd(i * 11.9);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({
+    color:cor, size:tam, map:TEX_PONTO, transparent:true, opacity:.9,
+    depthWrite:false, blending:THREE.AdditiveBlending
+  }));
+  p.userData = {vel, yMin, yMax, subida};
+  return p;
+}
+
+/* --- piso quadriculado do museu --- */
+function texturaXadrez(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.fillStyle = '#e8e2d4'; x.fillRect(0, 0, 128, 128);
+  x.fillStyle = '#6d6455'; x.fillRect(0, 0, 64, 64); x.fillRect(64, 64, 64, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(5, 5);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* --------------------------- JARDIM --------------------------- */
+function cenarioJardim(){
+  const tronco  = mat(0x6b4a2c);
+  const copas   = [mat(0x2f7d40), mat(0x3f9c54), mat(0x4fae62)];
+  const arbusto = mat(0x357a44);
+  const pedra   = mat(0x8b9098, {roughness:1});
+
+  const gTronco = new THREE.CylinderGeometry(.12, .2, 1, 8);
+  for(let i = 0; i < 12; i++){
+    const a = (i/12) * Math.PI*2 + rnd(i) * .45;
+    if(!livre(a)) continue;
+    const r = 4.2 + rnd(i*2.3) * 2.8;
+    const h = 1.8 + rnd(i*3.7) * 2.2;
+    const t = poe(gTronco, tronco, Math.cos(a)*r, h/2, Math.sin(a)*r);
+    t.scale.y = h;
+    const copa = copas[i % 3];
+    const raioCopa = .65 + rnd(i*5.1) * .45;
+    poe(new THREE.SphereGeometry(raioCopa, 12, 9), copa,
+        Math.cos(a)*r, h + raioCopa*.6, Math.sin(a)*r);
+    poe(new THREE.SphereGeometry(raioCopa*.7, 10, 8), copas[(i+1) % 3],
+        Math.cos(a)*r + .35, h + raioCopa*.1, Math.sin(a)*r + .2);
+  }
+
+  const gArb = new THREE.SphereGeometry(.4, 10, 8);
+  for(let i = 0; i < 16; i++){
+    const a = rnd(i*13.3) * Math.PI*2;
+    if(!livre(a)) continue;
+    const r = 3.1 + rnd(i*17.1) * 3.4;
+    const m = poe(gArb, arbusto, Math.cos(a)*r, .18, Math.sin(a)*r);
+    m.scale.set(1 + rnd(i)*.6, .55, 1 + rnd(i*2)*.6);
+  }
+
+  const gPed = new THREE.DodecahedronGeometry(.3, 0);
+  for(let i = 0; i < 9; i++){
+    const a = rnd(i*23.7) * Math.PI*2;
+    if(!livre(a)) continue;
+    const r = 3.0 + rnd(i*29.3) * 3.8;
+    const m = poe(gPed, pedra, Math.cos(a)*r, .12, Math.sin(a)*r);
+    m.scale.set(.6 + rnd(i)*.8, .45, .6 + rnd(i*3)*.8);
+    m.rotation.set(rnd(i*5), rnd(i*6)*3, rnd(i*7));
+  }
+
+  particulas = montaParticulas(110, 8, .2, 3.2, 0xfff0a8, .07, .35);
+  cenario.add(particulas);
+}
+
+/* --------------------------- MUSEU --------------------------- */
+function cenarioMuseu(){
+  const marmore = mat(0xf4efe2, {roughness:.35});
+  const dourado = mat(0xb08341, {roughness:.3, metalness:.6});
+  /* parede mais escura que o marmore: e o contraste que da profundidade ao salao */
+  const parede  = new THREE.MeshStandardMaterial({
+    color:0x9c8560, roughness:.9, transparent:true, opacity:.62, side:THREE.DoubleSide});
+
+  /* parede circular da sala */
+  poe(new THREE.CylinderGeometry(6.4, 6.4, 3.8, 40, 1, true), parede, 0, 1.9, 0);
+  /* rodape e friso */
+  poe(new THREE.CylinderGeometry(6.42, 6.42, .18, 40, 1, true), dourado, 0, .09, 0);
+  poe(new THREE.CylinderGeometry(6.42, 6.42, .12, 40, 1, true), dourado, 0, 3.5, 0);
+
+  /* colunas */
+  const gCol = new THREE.CylinderGeometry(.19, .19, 3.2, 14);
+  const gCap = new THREE.BoxGeometry(.52, .16, .52);
+  for(let i = 0; i < 12; i++){
+    const a = (i/12) * Math.PI*2;
+    if(!livre(a)) continue;                 // abre duas passagens, uma por seta
+    const x = Math.cos(a)*5.3, z = Math.sin(a)*5.3;
+    poe(gCol, marmore, x, 1.6, z);
+    poe(gCap, marmore, x, 3.28, z, a);
+    poe(gCap, marmore, x, .08,  z, a);
+  }
+
+  /* quadros na parede */
+  const telas = [0x2f5f7a, 0x7a4a2f, 0x3f6b4a, 0x5a3f6b, 0x6b5a2f, 0x2f3f6b];
+  for(let i = 0; i < 6; i++){
+    const a = (i/6) * Math.PI*2 + .26;
+    if(!livre(a)) continue;
+    const x = Math.cos(a)*6.25, z = Math.sin(a)*6.25;
+    poe(new THREE.BoxGeometry(1.15, .85, .08), dourado, x, 1.95, z, -a);
+    poe(new THREE.BoxGeometry(.95, .65, .1), mat(telas[i]), x, 1.95, z, -a);
+  }
+
+  /* pedestais entre as colunas */
+  const gPed = new THREE.CylinderGeometry(.24, .3, .85, 12);
+  const formas = [
+    new THREE.OctahedronGeometry(.19, 0),
+    new THREE.TorusKnotGeometry(.13, .05, 48, 8),
+    new THREE.IcosahedronGeometry(.19, 0),
+    new THREE.ConeGeometry(.18, .34, 6)
+  ];
+  for(let i = 0; i < 4; i++){
+    const a = (i/4) * Math.PI*2 + .78;
+    const x = Math.cos(a)*4.3, z = Math.sin(a)*4.3;
+    poe(gPed, marmore, x, .42, z);
+    const p = poe(formas[i], dourado, x, 1.05, z);
+    animados.push({obj:p, gy:.4});
+  }
+
+  particulas = montaParticulas(80, 6, .3, 3.2, 0xfff4dd, .05, .12);
+  cenario.add(particulas);
+}
+
+/* --------------------------- LABORATORIO --------------------------- */
+function cenarioLab(){
+  const metal = mat(0x3d454f, {roughness:.5, metalness:.5});
+  const escuro = mat(0x232a33, {roughness:.6, metalness:.3});
+  const vidro = new THREE.MeshStandardMaterial({
+    color:0x9fe6ff, roughness:.1, metalness:.1, transparent:true, opacity:.28});
+  const brilho = new THREE.MeshBasicMaterial({color:0x39d98a});
+  const tela   = new THREE.MeshBasicMaterial({color:0x2fa8d8});
+
+  /* luminaria do teto do laboratorio */
+  const luz = new THREE.PointLight(0x9fe6ff, 14, 13, 2);
+  luz.position.set(0, 3, 0);
+  cenario.add(luz);
+
+  /* racks de servidor em volta */
+  const gRack = new THREE.BoxGeometry(1.1, 2.2, .6);
+  const gLuz  = new THREE.BoxGeometry(.75, .05, .04);
+  for(let i = 0; i < 9; i++){
+    const a = (i/9) * Math.PI*2 + .3;
+    if(!livre(a)) continue;
+    const x = Math.cos(a)*4.8, z = Math.sin(a)*4.8;
+    poe(gRack, escuro, x, 1.1, z, -a + Math.PI/2);
+    for(let k = 0; k < 5; k++){
+      const m = poe(gLuz, k % 2 ? brilho : tela, 0, 0, 0);
+      m.position.set(x - Math.sin(-a + Math.PI/2)*.31, .5 + k*.34, z - Math.cos(-a + Math.PI/2)*.31);
+      m.rotation.y = -a + Math.PI/2;
+    }
+  }
+
+  /* tanques com liquido */
+  for(let i = 0; i < 4; i++){
+    const a = (i/4) * Math.PI*2 + .9;
+    const x = Math.cos(a)*3.5, z = Math.sin(a)*3.5;
+    poe(new THREE.CylinderGeometry(.34, .34, 1.5, 18, 1, true), vidro, x, 1.05, z);
+    poe(new THREE.CylinderGeometry(.36, .36, .16, 18), metal, x, .28, z);
+    poe(new THREE.CylinderGeometry(.36, .36, .16, 18), metal, x, 1.85, z);
+    const liq = poe(new THREE.CylinderGeometry(.3, .3, .8, 18),
+                    new THREE.MeshBasicMaterial({color:i % 2 ? 0x39d98a : 0x7be0ff,
+                                                 transparent:true, opacity:.55}), x, .78, z);
+    animados.push({obj:liq, base:.78, flutua:.06, vel:1.3, fase:i});
+  }
+
+  /* dutos suspensos */
+  const gDuto = new THREE.TorusGeometry(3.6, .07, 8, 40, Math.PI);
+  for(let i = 0; i < 3; i++){
+    const d = poe(gDuto, metal, 0, 2.9 + i*.22, 0, i * 1.05);
+    d.rotation.x = Math.PI/2;
+    d.rotation.z = i * 1.05;
+  }
+
+  /* piso: linhas de luz */
+  const anelLuz = poe(new THREE.RingGeometry(3.9, 3.98, 64),
+                      new THREE.MeshBasicMaterial({color:0x39d98a, transparent:true, opacity:.55,
+                                                   side:THREE.DoubleSide}), 0, .02, 0);
+  anelLuz.rotation.x = -Math.PI/2;
+
+  particulas = montaParticulas(140, 6, .1, 3.4, 0x7be0ff, .06, .6);
+  cenario.add(particulas);
+}
+
+/* --------------------------- ESPACO --------------------------- */
+function cenarioEspaco(){
+  const chapa = mat(0x39405a, {roughness:.4, metalness:.7});
+  const borda = new THREE.MeshBasicMaterial({color:0xc7b6ff, transparent:true, opacity:.7,
+                                             side:THREE.DoubleSide});
+
+  /* luz propria da plataforma: no vazio do espaco nao ha nada refletindo */
+  const luz = new THREE.PointLight(0xc7b6ff, 16, 15, 2);
+  luz.position.set(0, 3.2, 0);
+  cenario.add(luz);
+
+  /* plataforma hexagonal flutuando */
+  const plat = poe(new THREE.CylinderGeometry(3.4, 3.1, .22, 6), chapa, 0, -.14, 0);
+  plat.rotation.y = .4;
+  const aro = poe(new THREE.RingGeometry(3.3, 3.42, 6), borda, 0, -.02, 0);
+  aro.rotation.x = -Math.PI/2;
+  aro.rotation.z = .4;
+
+  /* treliça embaixo da plataforma */
+  const gViga = new THREE.BoxGeometry(.1, .1, 2.4);
+  for(let i = 0; i < 6; i++){
+    const a = (i/6) * Math.PI*2 + .4;
+    const v = poe(gViga, chapa, Math.cos(a)*1.5, -.7, Math.sin(a)*1.5, -a);
+    v.rotation.x = .5;
+  }
+
+  /* planetas distantes */
+  const planetas = [
+    {c:0xd98ab0, r:4.2, p:[-22, 9, -26]},
+    {c:0x6f9ad8, r:2.6, p:[26, 6, -20]},
+    {c:0xd8b47a, r:1.6, p:[14, 12, 24]}
+  ];
+  for(const pl of planetas){
+    poe(new THREE.SphereGeometry(pl.r, 24, 18), mat(pl.c, {roughness:.95}), ...pl.p);
+  }
+  const anelPlaneta = poe(new THREE.TorusGeometry(6.4, .25, 10, 40),
+                          mat(0xf0dca8, {roughness:.8}), -22, 9, -26);
+  anelPlaneta.rotation.set(1.2, 0, .35);
+
+  /* estacao ao longe */
+  const est = poe(new THREE.TorusGeometry(3.2, .45, 12, 32), chapa, 18, 8, 16);
+  est.rotation.set(1.1, .3, 0);
+  animados.push({obj:est, gz:.06});
+
+  /* asteroides girando em volta */
+  const gAst = new THREE.DodecahedronGeometry(1, 0);
+  const mAst = mat(0x6a707c, {roughness:1});
+  for(let i = 0; i < 18; i++){
+    const a = rnd(i*3.9) * Math.PI*2;
+    const r = 6 + rnd(i*7.3) * 7;
+    if(!livre(a) && r < 9) continue;
+    const y = .5 + rnd(i*11.1) * 5;
+    const m = poe(gAst, mAst, Math.cos(a)*r, y, Math.sin(a)*r);
+    const e = .2 + rnd(i*13.7) * .55;
+    m.scale.set(e * 1.2, e * .85, e);
+    m.rotation.set(rnd(i), rnd(i*2)*4, rnd(i*3));
+    animados.push({obj:m, gy:.1 + rnd(i*17)*.3, gx:.05 + rnd(i*19)*.15,
+                   base:y, flutua:.12, vel:.4 + rnd(i*23)*.5, fase:i});
+  }
+
+  particulas = montaParticulas(420, 30, -12, 22, 0xffffff, .13, 0);
+  cenario.add(particulas);
+}
+
+const CENARIOS = {jardim:cenarioJardim, museu:cenarioMuseu, lab:cenarioLab, espaco:cenarioEspaco};
+
+function montaCenario(area){
+  animados = [];
+  particulas = null;
+
+  /* piso da area */
+  if(piso.material.map){ piso.material.map.dispose(); piso.material.map = null; }
+  piso.visible = true;
+  piso.material.color.setHex(area.chao);
+  piso.material.opacity = semCamera ? .95 : .45;
+  if(area.cenario === 'museu'){
+    /* no modo sem camera quem desenha o quadriculado e o terreno inteiro,
+       entao o disco do meio sai de cena para os dois nao brigarem */
+    if(semCamera) piso.visible = false;
+    else piso.material.map = texturaXadrez();
+  }
+  piso.material.needsUpdate = true;
+
+  /* luz do cenario */
+  hemi.color.setHex(area.luz);
+  hemi.groundColor.setHex(area.chao);
+  hemi.intensity = area.amb;
+  sol.color.setHex(area.sol[0]);
+  sol.intensity = area.sol[1];
+
+  /* Terreno amplo e domo do ceu so no modo sem camera: no AR quem faz esse
+     papel e o chao e o ambiente reais que aparecem pela camera. */
+  if(semCamera){
+    cenario.add(montaDomo(area.ceu[0], area.ceu[1]));
+    if(area.cenario !== 'espaco'){          // no espaco a plataforma flutua
+      const terreno = poe(new THREE.CircleGeometry(34, 48),
+                          mat(area.chao, {roughness:1}), 0, -.03, 0);
+      terreno.rotation.x = -Math.PI/2;
+      if(area.cenario === 'museu'){         // salao inteiro quadriculado
+        const t = texturaXadrez();
+        t.repeat.set(68, 68);               // mesmo tamanho de ladrilho do disco central
+        terreno.material.map = t;
+        terreno.material.color.setHex(0xffffff);
+      }
+    }
+  }
+  CENARIOS[area.cenario]();
+}
+
+function atualizaCenario(dt, t){
+  for(const a of animados){
+    if(a.gy) a.obj.rotation.y += a.gy * dt;
+    if(a.gx) a.obj.rotation.x += a.gx * dt;
+    if(a.gz) a.obj.rotation.z += a.gz * dt;
+    if(a.flutua) a.obj.position.y = a.base + Math.sin(t * a.vel + a.fase) * a.flutua;
+  }
+  if(particulas){
+    const u = particulas.userData;
+    if(u.subida){
+      const p = particulas.geometry.attributes.position;
+      for(let i = 0; i < p.count; i++){
+        let y = p.getY(i) + u.vel[i] * u.subida * dt;
+        if(y > u.yMax) y = u.yMin;
+        p.setY(i, y);
+      }
+      p.needsUpdate = true;
+    }
+    particulas.rotation.y += dt * .012;
+  }
+}
+
+/* =========================================================================
+   4. MONTAGEM E TROCA DE AREA
+   ========================================================================= */
+let indiceArea = 0;
+let interativos = [];                       // objetos que a mira reconhece
+const conteudo = new THREE.Group();
+grupoArea.add(conteudo);
+
+function limpa(obj){
+  obj.traverse(o=>{
+    if(o.geometry) o.geometry.dispose();
+    if(o.material){
+      /* texturas de canvas (etiquetas, domo, xadrez) sao unicas por area;
+         a textura das particulas e compartilhada e nao pode ser destruida */
+      if(o.material.map && o.material.map !== TEX_PONTO) o.material.map.dispose();
+      o.material.dispose();
+    }
+  });
+  obj.clear();
+}
+
+function carregaArea(i){
+  indiceArea = (i + AREAS.length) % AREAS.length;
+  const area = AREAS[indiceArea];
+
+  limpa(conteudo);
+  limpa(cenario);
+  interativos = [];
+
+  montaCenario(area);
+  limite.material.color.setHex(area.cor);
+  grade.material.color.setHex(area.cor);
+  grade.material.opacity = semCamera ? .12 : .22;
+
+  /* objetos distribuidos em circulo ao redor do jogador */
+  area.objetos.forEach((def, k)=>{
+    const ang  = (k / area.objetos.length) * Math.PI * 2 + .35;
+    const raio = 1.9 + (k % 2) * .5;
+    const o = montaObjeto(def);
+    o.position.set(Math.cos(ang)*raio, 0, Math.sin(ang)*raio);
+    o.rotation.y = -ang + Math.PI/2;
+
+    const et = etiqueta('?', '#9aa3ae');
+    et.position.set(0, 1.55, 0);
+    o.add(et);
+
+    o.userData = {interativo:true, tipo:'objeto', def, etiqueta:et,
+                  observado:false, fase:k*1.3, dwell:DWELL_OBJ};
+    conteudo.add(o);
+    interativos.push(o);
+  });
+
+  /* duas setas: proxima area e area anterior */
+  const prox = AREAS[(indiceArea + 1) % AREAS.length];
+  const ante = AREAS[(indiceArea - 1 + AREAS.length) % AREAS.length];
+
+  const s1 = montaSeta(true, area.cor);
+  s1.position.set(3.3, 1.4, 0);
+  s1.rotation.y = -Math.PI/2;
+  const e1 = etiqueta('>  ' + prox.nome, '#ffcf5c');
+  e1.position.set(0, .95, 0);
+  s1.add(e1);
+  s1.userData = {interativo:true, tipo:'seta', destino:indiceArea + 1, dwell:DWELL_SETA,
+                 aro:s1.userData.aro};
+  conteudo.add(s1);
+  interativos.push(s1);
+
+  const s2 = montaSeta(false, area.cor);
+  s2.position.set(-3.3, 1.4, 0);
+  s2.rotation.y = Math.PI/2;
+  const e2 = etiqueta(ante.nome + '  <', '#ffcf5c');
+  e2.position.set(0, .95, 0);
+  s2.add(e2);
+  s2.userData = {interativo:true, tipo:'seta', destino:indiceArea - 1, dwell:DWELL_SETA,
+                 aro:s2.userData.aro};
+  conteudo.add(s2);
+  interativos.push(s2);
+
+  atualizaHUD();
+}
+
+let travaSeta = 0;   // instante ate o qual as setas ficam inativas
+
+function trocaArea(destino){
+  fade.classList.add('on');
+  bip(420, .18);
+  setTimeout(()=>{
+    carregaArea(destino);
+    fade.classList.remove('on');
+    travaSeta = performance.now() + 1500;
+  }, 360);
+}
+
+/* =========================================================================
+   5. HUD
+   ========================================================================= */
+const chipArea = document.getElementById('chipArea');
+const chipPts  = document.getElementById('chipPts');
+const mira     = document.getElementById('mira');
+const anel     = document.querySelector('.anelProg');
+const info     = document.getElementById('info');
+const dicaEl   = document.getElementById('dica');
+const fade     = document.getElementById('fade');
+
+const CIRC = 2 * Math.PI * 22;
+
+function atualizaHUD(){
+  const area   = AREAS[indiceArea];
+  const total  = area.objetos.length;
+  const feitos = interativos.filter(o => o.userData.tipo === 'objeto' && o.userData.observado).length;
+  chipArea.textContent = area.nome;
+  chipPts.innerHTML = 'Observados <b>' + feitos + '/' + total + '</b>';
+  if(feitos === total){
+    area.completa = true;
+    dicaEl.textContent = AREAS.every(a => a.completa)
+      ? 'Voce explorou todas as areas! Continue passeando a vontade.'
+      : 'Area completa! Encare uma seta por 3s para ir ao proximo cenario.';
+  }
+}
+
+let timerInfo = null;
+function mostraInfo(titulo, texto){
+  info.querySelector('h3').textContent = titulo;
+  info.querySelector('p').textContent  = texto;
+  info.classList.add('on');
+  clearTimeout(timerInfo);
+  timerInfo = setTimeout(()=> info.classList.remove('on'), 4200);
+}
+
+/* bip curto de feedback */
+let ctxAudio = null;
+function bip(freq, dur){
+  try{
+    ctxAudio = ctxAudio || new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctxAudio.createOscillator(), g = ctxAudio.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq || 660;
+    const t0 = ctxAudio.currentTime;
+    g.gain.setValueAtTime(.0001, t0);
+    g.gain.exponentialRampToValueAtTime(.14, t0 + .01);
+    g.gain.exponentialRampToValueAtTime(.0001, t0 + (dur || .09));
+    o.connect(g); g.connect(ctxAudio.destination);
+    o.start(); o.stop(t0 + (dur || .09) + .02);
+  }catch(e){}
+}
+
+/* =========================================================================
+   6. CONTROLES: olhar (giroscopio / mouse) e andar (joystick / teclado)
+   ========================================================================= */
+let usaSensor = false;              // vira true quando o giroscopio responde
+let yaw = 0, pitch = 0;             // olhar por arraste (PC / fallback)
+camera.rotation.order = 'YXZ';
+
+/* -- arraste para olhar -- */
+let arrastando = false, ax = 0, ay = 0;
+renderer.domElement.style.touchAction = 'none';
+addEventListener('pointerdown', e=>{
+  if(e.target.closest('#stick') || e.target.closest('#start')) return;
+  arrastando = true; ax = e.clientX; ay = e.clientY;
+});
+addEventListener('pointermove', e=>{
+  if(!arrastando || usaSensor) return;
+  yaw   -= (e.clientX - ax) * .004;
+  pitch -= (e.clientY - ay) * .004;
+  pitch = Math.max(-1.4, Math.min(1.4, pitch));
+  ax = e.clientX; ay = e.clientY;
+});
+addEventListener('pointerup',    ()=> arrastando = false);
+addEventListener('pointercancel',()=> arrastando = false);
+
+/* -- giroscopio (celular) -- */
+const zee = new THREE.Vector3(0, 0, 1);
+const eul = new THREE.Euler();
+const q0  = new THREE.Quaternion();
+const q1  = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5));
+let ori = {alpha:0, beta:0, gamma:0};
+
+function onOrientacao(e){
+  if(e.alpha === null || e.beta === null) return;
+  usaSensor = true;
+  ori = {alpha:e.alpha, beta:e.beta, gamma:e.gamma};
+}
+function aplicaSensor(){
+  const a = THREE.MathUtils.degToRad(ori.alpha);
+  const b = THREE.MathUtils.degToRad(ori.beta);
+  const g = THREE.MathUtils.degToRad(ori.gamma);
+  const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  const orient = THREE.MathUtils.degToRad(ang);
+  eul.set(b, a, -g, 'YXZ');
+  camera.quaternion.setFromEuler(eul);
+  camera.quaternion.multiply(q1);
+  camera.quaternion.multiply(q0.setFromAxisAngle(zee, -orient));
+}
+
+/* -- teclado -- */
+const teclas = {};
+addEventListener('keydown', e=> teclas[e.code] = true);
+addEventListener('keyup',   e=> teclas[e.code] = false);
+
+/* -- joystick -- */
+const stick = document.getElementById('stick');
+const knob  = stick.querySelector('i');
+let jx = 0, jy = 0, jid = null;
+stick.addEventListener('pointerdown', e=>{ jid = e.pointerId; stick.setPointerCapture(jid); moveJ(e); });
+stick.addEventListener('pointermove', e=>{ if(e.pointerId === jid) moveJ(e); });
+stick.addEventListener('pointerup',     soltaJ);
+stick.addEventListener('pointercancel', soltaJ);
+function moveJ(e){
+  const r = stick.getBoundingClientRect();
+  let dx = e.clientX - (r.left + r.width/2);
+  let dy = e.clientY - (r.top  + r.height/2);
+  const max = r.width/2 - 12, d = Math.hypot(dx, dy);
+  if(d > max){ dx = dx/d*max; dy = dy/d*max; }
+  jx = dx/max; jy = dy/max;
+  knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+}
+function soltaJ(){ jid = null; jx = jy = 0; knob.style.transform = 'translate(0,0)'; }
+
+if(matchMedia('(pointer:coarse)').matches) document.body.classList.add('toque');
+
+/* =========================================================================
+   7. MIRA: raycast com tempo de permanencia
+   ========================================================================= */
+const raio = new THREE.Raycaster();
+raio.far = 12;
+const vPos = new THREE.Vector3(), vDir = new THREE.Vector3();
+let alvo = null, tempoAlvo = 0;
+
+function camAtiva(){ return renderer.xr.isPresenting ? renderer.xr.getCamera() : camera; }
+
+function raizInterativa(obj){
+  while(obj){
+    if(obj.userData && obj.userData.interativo) return obj;
+    obj = obj.parent;
+  }
+  return null;
+}
+
+function checaMira(dt){
+  const cam = camAtiva();
+  cam.getWorldPosition(vPos);
+  cam.getWorldDirection(vDir);
+  raio.set(vPos, vDir);
+
+  const hits = raio.intersectObjects(interativos, true);
+  let novo = null;
+  for(const h of hits){
+    if(h.object.isSprite) continue;               // etiqueta nao conta como alvo
+    const r = raizInterativa(h.object);
+    if(r){ novo = r; break; }
+  }
+  /* objeto ja observado nao reinicia o contador */
+  if(novo && novo.userData.tipo === 'objeto' && novo.userData.observado) novo = null;
+  /* logo depois de trocar de area a seta fica travada, senao encadeia trocas */
+  if(novo && novo.userData.tipo === 'seta' && performance.now() < travaSeta) novo = null;
+
+  if(novo !== alvo){ alvo = novo; tempoAlvo = 0; }
+
+  if(alvo){
+    tempoAlvo += dt * 1000;
+    const p = Math.min(1, tempoAlvo / alvo.userData.dwell);
+    anel.style.strokeDashoffset = CIRC * (1 - p);
+    mira.classList.add('ativa');
+    mira.classList.toggle('seta', alvo.userData.tipo === 'seta');
+    if(p >= 1) ativa(alvo);
+  }else{
+    tempoAlvo = 0;
+    anel.style.strokeDashoffset = CIRC;
+    mira.classList.remove('ativa', 'seta');
+  }
+}
+
+function ativa(o){
+  const u = o.userData;
+  alvo = null;
+  tempoAlvo = 0;
+  anel.style.strokeDashoffset = CIRC;
+  mira.classList.remove('ativa', 'seta');
+
+  if(u.tipo === 'seta'){ trocaArea(u.destino); return; }
+
+  u.observado = true;
+  const nova = etiqueta(u.def.nome, '#4dd4ac');
+  u.etiqueta.material.map.dispose();
+  u.etiqueta.material.dispose();
+  u.etiqueta.material = nova.material;
+  o.traverse(m=>{ if(m.isMesh) m.material.emissive.setHex(0x1b4d3e); });
+  mostraInfo(u.def.nome, u.def.desc);
+  bip(880, .12);
+  atualizaHUD();
+}
+
+/* =========================================================================
+   8. MOVIMENTO
+   ========================================================================= */
+const vFrente = new THREE.Vector3(), vLado = new THREE.Vector3();
+const cima = new THREE.Vector3(0, 1, 0);
+const qTmp = new THREE.Quaternion(), cabeca = new THREE.Vector3();
+
+function anda(dt){
+  let fx = 0, fz = 0;                                   // fz > 0 = para frente
+  if(teclas.KeyW || teclas.ArrowUp)    fz += 1;
+  if(teclas.KeyS || teclas.ArrowDown)  fz -= 1;
+  if(teclas.KeyD || teclas.ArrowRight) fx += 1;
+  if(teclas.KeyA || teclas.ArrowLeft)  fx -= 1;
+  fx += jx; fz -= jy;
+
+  const mag = Math.hypot(fx, fz);
+  if(mag > .05){
+    if(mag > 1){ fx /= mag; fz /= mag; }
+    const cam = camAtiva();
+    cam.getWorldQuaternion(qTmp);
+    vFrente.set(0, 0, -1).applyQuaternion(qTmp);
+    vFrente.y = 0;
+    vFrente.normalize();
+    vLado.crossVectors(vFrente, cima).normalize().negate();
+    rig.position.addScaledVector(vFrente, fz * VELOCIDADE * dt);
+    rig.position.addScaledVector(vLado,   fx * VELOCIDADE * dt);
+  }
+
+  /* nao deixa sair da area (vale tambem quando voce anda de verdade no AR) */
+  camAtiva().getWorldPosition(cabeca);
+  const d = Math.hypot(cabeca.x, cabeca.z);
+  if(d > RAIO_AREA){
+    const excesso = d - RAIO_AREA;
+    rig.position.x -= (cabeca.x/d) * excesso;
+    rig.position.z -= (cabeca.z/d) * excesso;
+  }
+}
+
+/* =========================================================================
+   9. LOOP
+   ========================================================================= */
+const relogio = new THREE.Clock();
+let rodando = false;
+
+renderer.setAnimationLoop(()=>{
+  const dt = Math.min(relogio.getDelta(), .05);
+
+  if(rodando){
+    if(!renderer.xr.isPresenting){
+      if(usaSensor) aplicaSensor();
+      else { camera.rotation.y = yaw; camera.rotation.x = pitch; }
+    }
+    anda(dt);
+    checaMira(dt);
+
+    const t = performance.now() / 1000;
+    atualizaCenario(dt, t);
+
+    for(const o of interativos){
+      const u = o.userData;
+      if(u.tipo === 'objeto'){
+        o.position.y = Math.sin(t*1.1 + u.fase) * .03;
+        if(u.observado) o.rotation.y += dt * .5;
+        u.etiqueta.material.opacity = (alvo === o || u.observado) ? 1 : .55;
+      }else{
+        o.rotation.z = Math.sin(t*2) * .06;
+        const foco = (alvo === o);
+        u.aro.material.opacity = foco ? .35 + Math.abs(Math.sin(t*6)) * .5 : .25;
+        u.aro.scale.setScalar(foco ? 1 + Math.sin(t*6) * .06 : 1);
+      }
+    }
+  }
+
+  renderer.render(cena, camera);
+});
+
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* =========================================================================
+   10. INICIO
+   ========================================================================= */
+const telaStart = document.getElementById('start');
+const erroEl    = document.getElementById('erro');
+const video     = document.getElementById('cam');
+const btnXR     = document.getElementById('btnXR');
+const btnCam    = document.getElementById('btnCam');
+const btnSem    = document.getElementById('btnSem');
+
+if(navigator.xr && navigator.xr.isSessionSupported){
+  navigator.xr.isSessionSupported('immersive-ar')
+    .then(ok=>{ if(ok) btnXR.style.display = 'block'; })
+    .catch(()=>{});
+}
+
+async function pedeSensor(){
+  if(typeof DeviceOrientationEvent !== 'undefined' &&
+     typeof DeviceOrientationEvent.requestPermission === 'function'){
+    try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
+  }
+  addEventListener('deviceorientation', onOrientacao);
+}
+
+function comeca(){
+  telaStart.style.display = 'none';
+  camera.position.y = renderer.xr.isPresenting ? 0 : 1.6;
+  carregaArea(0);
+  dicaEl.textContent = document.body.classList.contains('toque')
+    ? 'Gire o celular para olhar - joystick para andar - encare para interagir'
+    : 'Arraste o mouse para olhar - W A S D para andar - encare para interagir';
+  rodando = true;
+  bip(560, .1);
+}
+
+btnCam.addEventListener('click', async ()=>{
+  erroEl.textContent = 'Pedindo acesso a camera...';
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}},
+      audio:false
+    });
+    video.srcObject = s;
+    await video.play();
+    await pedeSensor();
+    erroEl.textContent = '';
+    comeca();
+  }catch(e){
+    erroEl.textContent = 'Nao consegui abrir a camera (' + e.name + '). A camera so funciona em ' +
+      'https:// ou http://localhost. Use "Jogar sem camera" para testar.';
+  }
+});
+
+btnSem.addEventListener('click', async ()=>{
+  video.style.display = 'none';
+  semCamera = true;              // sem passthrough: o domo do ceu pode aparecer
+  await pedeSensor();
+  comeca();
+});
+
+btnXR.addEventListener('click', async ()=>{
+  try{
+    const sessao = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures:['local-floor'],
+      optionalFeatures:['dom-overlay'],
+      domOverlay:{root:document.body}
+    });
+    video.style.display = 'none';
+    await renderer.xr.setSession(sessao);
+    sessao.addEventListener('end', ()=>{ rodando = false; telaStart.style.display = 'flex'; });
+    comeca();
+  }catch(e){
+    erroEl.textContent = 'WebXR nao iniciou (' + e.message + '). Tente "Iniciar com a camera".';
+  }
+});
+</script>
+</body>
+</html>
