@@ -48,13 +48,13 @@
   #dica{position:absolute;left:50%;bottom:calc(14px + var(--pad-b));transform:translateX(-50%);
     font-size:11.5px;opacity:.6;text-align:center;width:92vw}
 
-  /* joystick de movimento (toque) */
+  /* joystick de movimento: so aparece se o aparelho nao contar passos */
   #stick{position:absolute;left:calc(18px + env(safe-area-inset-left,0px));bottom:calc(24px + var(--pad-b));
     width:118px;height:118px;border-radius:50%;background:rgba(255,255,255,.07);
     border:1px solid rgba(255,255,255,.18);pointer-events:auto;touch-action:none;display:none}
   #stick i{position:absolute;left:50%;top:50%;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;
     background:rgba(255,255,255,.28);border:1px solid rgba(255,255,255,.35)}
-  body.toque #stick{display:block}
+  body.semPassos #stick{display:block}
 
   /* fade de transicao entre areas */
   #fade{position:fixed;inset:0;z-index:8;background:#000;opacity:0;pointer-events:none;transition:opacity .35s}
@@ -106,8 +106,9 @@
      e descubra os objetos escondidos em cada cenario.</p>
   <div class="regras">
     <div><b class="num">1</b><span>Aponte a mira (o circulo no centro da tela) para um objeto e segure por ~1,2s para observa-lo.</span></div>
-    <div><b class="num">2</b><span>Ande pela area: joystick no canto (celular) ou <b>W A S D</b> (PC).</span></div>
-    <div><b class="num">3</b><span>Para trocar de cenario, encare uma <b>seta</b> por <b>3 segundos</b>.</span></div>
+    <div><b class="num">2</b><span>Olhe ao redor girando o proprio celular, ou arrastando o mouse no PC.</span></div>
+    <div><b class="num">3</b><span>Para andar, <b>ande de verdade</b>: o jogo conta seus passos e avanca na direcao em que voce estiver olhando (no PC, <b>W A S D</b>).</span></div>
+    <div><b class="num">4</b><span>Para trocar de cenario, encare uma <b>seta</b> por <b>3 segundos</b>.</span></div>
   </div>
   <div class="btns">
     <button id="btnJogar" class="primario">Jogar</button>
@@ -128,7 +129,14 @@ import * as THREE from 'three';
 const RAIO_AREA  = 2.5;    // raio (m) da area caminhavel
 const DWELL_OBJ  = 1200;   // ms encarando um objeto para observa-lo
 const DWELL_SETA = 3000;   // ms encarando a seta para trocar de area
-const VELOCIDADE = 1.4;    // m/s
+const VELOCIDADE = 1.4;    // m/s do joystick e do W A S D
+
+/* passos reais: quanto cada passo detectado anda e o quanto o aparelho precisa
+   sacudir para valer um passo (suba o limiar se andar sozinho, desca se o jogo
+   perder passos) */
+const PASSO        = .7;   // metros por passo
+const LIMIAR_PASSO = 1.2;  // m/s2 acima do repouso para contar o pico
+const PAUSA_PASSO  = 300;  // ms minimos entre dois passos
 
 /* Cada objeto e montado com pecas primitivas:
    g = geometria, a = argumentos, p = posicao local, c = cor, r = rotacao, e = escala */
@@ -1006,6 +1014,44 @@ function aplicaSensor(){
   camera.quaternion.multiply(q0.setFromAxisAngle(zee, -orient));
 }
 
+/* -- andar de verdade: contagem de passos ---------------------------------
+   O celular nao sabe *onde* voce esta - isso quem sabia era a camera. Mas o
+   acelerometro sente cada passada: quando o pe bate no chao a aceleracao da
+   um pico. Contamos esses picos e cada um avanca PASSO metros na direcao em
+   que voce esta olhando. Nao e posicao real, e passo contado - mas responde
+   ao seu movimento de verdade, e nao acumula a deriva de metros que daria
+   integrar a aceleracao duas vezes.                                          */
+let temMovimento = false;     // o aparelho respondeu ao devicemotion?
+let baseAcel = 9.8;           // nivel de repouso, acompanhado devagar
+let noPico = false, ultimoPasso = 0, passos = 0;
+let avanco = 0;               // metros de passo ainda por consumir
+let oscMax = 0;               // maior oscilacao ja vista, so para saber se o
+                              // acelerometro esta mesmo vivo
+
+function onMovimento(e){
+  const a = e.accelerationIncludingGravity || e.acceleration;
+  if(!a || a.x === null) return;
+  temMovimento = true;
+
+  const m = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
+  baseAcel = baseAcel * .9 + m * .1;      // filtro passa-baixa: gravidade + repouso
+  const d = m - baseAcel;                 // sobra so a parte que oscila
+  oscMax = Math.max(oscMax, Math.abs(d));
+
+  if(!noPico && d > LIMIAR_PASSO){
+    noPico = true;
+    const agora = performance.now();
+    if(agora - ultimoPasso > PAUSA_PASSO){ // ignora o repique do mesmo passo
+      ultimoPasso = agora;
+      passos++;
+      avanco += PASSO;
+      bip(320, .04);
+    }
+  }else if(noPico && d < LIMIAR_PASSO * .35){
+    noPico = false;                        // vale: pronto para o proximo pico
+  }
+}
+
 /* -- teclado -- */
 const teclas = {};
 addEventListener('keydown', e=> teclas[e.code] = true);
@@ -1031,6 +1077,7 @@ function moveJ(e){
 function soltaJ(){ jid = null; jx = jy = 0; knob.style.transform = 'translate(0,0)'; }
 
 if(matchMedia('(pointer:coarse)').matches) document.body.classList.add('toque');
+
 
 /* =========================================================================
    7. MIRA: raycast com tempo de permanencia
@@ -1120,18 +1167,36 @@ function anda(dt){
   fx += jx; fz -= jy;
 
   const mag = Math.hypot(fx, fz);
-  if(mag > .05){
-    if(mag > 1){ fx /= mag; fz /= mag; }
+  /* os passos entram aos poucos: o avanco de cada passada e gasto ao longo de
+     alguns quadros, senao a imagem daria um pulo de 0,7 m de uma vez */
+  const passoAgora = avanco > .001 ? Math.min(avanco, 2.2 * dt) : 0;
+
+  if(mag > .05 || passoAgora){
     const cam = camAtiva();
     cam.getWorldQuaternion(qTmp);
     vFrente.set(0, 0, -1).applyQuaternion(qTmp);
     vFrente.y = 0;
+    if(vFrente.lengthSq() < 1e-6){
+      /* olhando reto para baixo (celular na mao, andando): a frente vira para
+         onde aponta o topo da tela */
+      vFrente.set(0, 1, 0).applyQuaternion(qTmp);
+      vFrente.y = 0;
+      if(vFrente.lengthSq() < 1e-6) vFrente.set(0, 0, -1);
+    }
     vFrente.normalize();
     /* frente x cima ja da o vetor "direita" da camera: com .negate() aqui o
        A e o D (e o joystick) saiam trocados */
     vLado.crossVectors(vFrente, cima).normalize();
-    rig.position.addScaledVector(vFrente, fz * VELOCIDADE * dt);
-    rig.position.addScaledVector(vLado,   fx * VELOCIDADE * dt);
+
+    if(mag > .05){
+      if(mag > 1){ fx /= mag; fz /= mag; }
+      rig.position.addScaledVector(vFrente, fz * VELOCIDADE * dt);
+      rig.position.addScaledVector(vLado,   fx * VELOCIDADE * dt);
+    }
+    if(passoAgora){
+      avanco -= passoAgora;
+      rig.position.addScaledVector(vFrente, passoAgora);
+    }
   }
 
   /* nao deixa sair da area */
@@ -1198,12 +1263,19 @@ const btnJogar  = document.getElementById('btnJogar');
 let permissaoSensor = '-';
 
 async function pedeSensor(){
-  /* iOS so entrega o giroscopio depois de um pedido feito dentro de um clique */
-  if(typeof DeviceOrientationEvent !== 'undefined' &&
-     typeof DeviceOrientationEvent.requestPermission === 'function'){
+  /* O iOS so entrega os sensores depois de um pedido feito dentro do clique -
+     e os dois pedidos precisam sair antes do primeiro await, senao o segundo
+     ja esta fora do gesto do usuario e falha. */
+  const pedidos = [];
+  const temPerm = o => typeof o !== 'undefined' && typeof o.requestPermission === 'function';
+  if(temPerm(window.DeviceOrientationEvent)) pedidos.push(DeviceOrientationEvent.requestPermission());
+  if(temPerm(window.DeviceMotionEvent))      pedidos.push(DeviceMotionEvent.requestPermission());
+
+  if(pedidos.length){
     try{
-      permissaoSensor = await DeviceOrientationEvent.requestPermission();
-      if(permissaoSensor !== 'granted'){
+      const r = await Promise.all(pedidos.map(p => p.catch(e => 'erro: ' + e.name)));
+      permissaoSensor = r.join(' / ');
+      if(r.some(x => x !== 'granted')){
         erroEl.textContent = 'Sem permissao para os sensores de movimento: da para jogar ' +
           'arrastando o dedo na tela para olhar.';
       }
@@ -1213,17 +1285,32 @@ async function pedeSensor(){
   /* varios Androids disparam so o "absolute"; o iOS so o outro. Ouvimos os dois. */
   addEventListener('deviceorientationabsolute', onOrientacao);
   addEventListener('deviceorientation', onOrientacao);
+  addEventListener('devicemotion', onMovimento);
 
   /* se em 1,2 s nenhum dos dois trouxe uma orientacao completa, tentamos o
      caminho novo (Generic Sensor API), que existe no Chrome do Android */
   setTimeout(()=>{ if(nivelFonte < 3) sensorDeQuaternion(); }, 1200);
 
-  /* e se depois de 3 s nada respondeu, avisamos em vez de deixar o jogador
-     achando que o jogo travou */
+  /* e se depois de 3 s nada respondeu, avisamos e devolvemos o joystick em vez
+     de deixar o jogador achando que o jogo travou */
   setTimeout(()=>{
-    if(usaSensor || !document.body.classList.contains('toque')) return;
-    dicaEl.textContent = 'Este aparelho nao respondeu ao giroscopio - arraste o dedo na tela para olhar';
+    if(!document.body.classList.contains('toque')) return;
+    if(!temMovimento) document.body.classList.add('semPassos');
+    if(!usaSensor){
+      dicaEl.textContent = 'Este aparelho nao respondeu ao giroscopio - arraste o dedo na tela para olhar';
+    }else if(!temMovimento){
+      dicaEl.textContent = 'Gire o celular para olhar - joystick para andar - encare para interagir';
+    }
   }, 3000);
+
+  /* alguns aparelhos respondem ao devicemotion mas com leitura travada. Um
+     celular na mao sempre oscila mais que isso, entao se depois de 8 s a
+     oscilacao nunca passou de um sopro, o acelerometro nao serve: joystick. */
+  setTimeout(()=>{
+    if(!document.body.classList.contains('toque') || oscMax > .2) return;
+    document.body.classList.add('semPassos');
+    dicaEl.textContent = 'O acelerometro deste aparelho nao registra os passos - use o joystick';
+  }, 8000);
 }
 
 /* Diagnostico: abra a pagina com ?diag=1 para ver o que o aparelho responde. */
@@ -1240,6 +1327,8 @@ if((location.search + location.hash).indexOf('diag') >= 0){
       'leituras ' + leituras + '\n' +
       'alfa/beta/gama ' + ori.alpha.toFixed(0) + ' / ' + ori.beta.toFixed(0) + ' / ' + ori.gamma.toFixed(0) + '\n' +
       'quaternion ' + q + '\n' +
+      'devicemotion ' + temMovimento + '   passos ' + passos + '\n' +
+      'repouso ' + baseAcel.toFixed(1) + ' m/s2   pico ' + oscMax.toFixed(1) + '\n' +
       'permissao ' + permissaoSensor + '\n' +
       'DeviceOrientationEvent ' + (typeof DeviceOrientationEvent !== 'undefined') + '\n' +
       'OrientationSensor ' + !!(window.RelativeOrientationSensor || window.AbsoluteOrientationSensor) + '\n' +
@@ -1252,7 +1341,7 @@ function comeca(){
   camera.position.y = 1.6;
   carregaArea(0);
   dicaEl.textContent = document.body.classList.contains('toque')
-    ? 'Gire o celular para olhar - joystick para andar - encare para interagir'
+    ? 'Gire o celular para olhar - ande de verdade para se mover - encare para interagir'
     : 'Arraste o mouse para olhar - W A S D para andar - encare para interagir';
   rodando = true;
   bip(560, .1);

@@ -27,8 +27,11 @@ Um botao so: **Jogar**. No celular ele pede permissao para os sensores de
 movimento (obrigatorio no iOS); se voce recusar, da para olhar arrastando o dedo.
 
 - **Olhar** — gire o celular (giroscopio) ou arraste o mouse no PC.
-- **Andar** — joystick no canto inferior esquerdo (toque) ou `W A S D` / setas (PC).
-  A area e um circulo de 2,5 m de raio, marcado no chao; voce nao consegue sair dele.
+- **Andar** — ande de verdade, com o celular na mao: o jogo conta seus passos pelo
+  acelerometro e avanca 0,7 m na direcao em que voce esta olhando. No PC, `W A S D`
+  / setas. A area e um circulo de 2,5 m de raio, marcado no chao; voce nao consegue
+  sair dele.
+  O joystick de toque so aparece se o acelerometro do aparelho nao responder.
 - **Observar um objeto** — deixe a mira central sobre ele por ~1,2 s. O anel verde
   fecha, o nome aparece e o contador sobe.
 - **Trocar de cenario** — encare uma das setas laterais por **3 segundos**
@@ -42,8 +45,28 @@ Tudo que da pra ajustar rapido esta no topo do `<script type="module">`:
 const RAIO_AREA  = 2.5;    // tamanho da area caminhavel, em metros
 const DWELL_OBJ  = 1200;   // ms encarando um objeto para observa-lo
 const DWELL_SETA = 3000;   // ms encarando a seta para trocar de area
-const VELOCIDADE = 1.4;    // m/s
+const VELOCIDADE = 1.4;    // m/s do joystick e do W A S D
+
+const PASSO        = .7;   // metros que cada passo detectado anda
+const LIMIAR_PASSO = 1.2;  // m/s2 acima do repouso para contar um passo
+const PAUSA_PASSO  = 300;  // ms minimos entre dois passos
 ```
+
+`LIMIAR_PASSO` e o botao a girar se a contagem sair errada: **suba** se o jogo
+andar sozinho com o celular parado na mao, **desca** se ele perder passos.
+
+## Se o celular nao responder
+
+Abra o jogo com `?diag=1` no fim do endereco —
+<https://dong0s.github.io/ar-explorer/?diag=1> — e um painel no canto mostra qual
+fonte de sensor esta em uso, quantas leituras chegaram, os angulos crus, quantos
+passos foram contados e o estado da permissao. E por ali que da para saber se o
+problema e permissao, falta de sensor ou o limiar dos passos.
+
+Para a orientacao o jogo tenta tres caminhos, nesta ordem: `deviceorientation`,
+`deviceorientationabsolute` e a Generic Sensor API (`RelativeOrientationSensor`).
+Basta um responder. Se nenhum responder, o arraste do dedo assume e a dica no
+rodape avisa.
 
 Para criar cenarios ou objetos novos, edite a lista `AREAS`. Cada objeto e montado
 com pecas primitivas:
