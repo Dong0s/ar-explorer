@@ -63,10 +63,18 @@ fonte de sensor esta em uso, quantas leituras chegaram, os angulos crus, quantos
 passos foram contados e o estado da permissao. E por ali que da para saber se o
 problema e permissao, falta de sensor ou o limiar dos passos.
 
-Para a orientacao o jogo tenta tres caminhos, nesta ordem: `deviceorientation`,
-`deviceorientationabsolute` e a Generic Sensor API (`RelativeOrientationSensor`).
-Basta um responder. Se nenhum responder, o arraste do dedo assume e a dica no
-rodape avisa.
+Para a orientacao o jogo tenta quatro caminhos, e basta um responder:
+`deviceorientation`, `deviceorientationabsolute`, `RelativeOrientationSensor` e
+`AbsoluteOrientationSensor`. Os dois primeiros sao eventos antigos; os dois
+ultimos, a Generic Sensor API, que so entra se os eventos ficarem mudos. A
+`Absolute` importa em celular **sem giroscopio**: ela se vira com acelerometro
++ bussola. Se nada responder, o arraste do dedo assume e a dica no rodape avisa.
+
+A linha `eventos` do painel separa os casos: `orient 0 / abs 0 / motion 0`
+significa que o navegador nao esta entregando sensor nenhum (permissao, ou
+navegador dentro de outro app); `orient 0 / abs 240` significa que existe
+bussola mas nao giroscopio; `sem alfa` alto significa sensor sem bussola, em
+que so a inclinacao funciona.
 
 Para criar cenarios ou objetos novos, edite a lista `AREAS`. Cada objeto e montado
 com pecas primitivas:

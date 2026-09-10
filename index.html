@@ -957,6 +957,10 @@ const q1  = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5));
 const qDev = new THREE.Quaternion();   // orientacao crua, quando vem em quaternion
 let ori = {alpha:0, beta:0, gamma:0};
 let fonteSensor = '', nivelFonte = 0, leituras = 0, modoQuat = false;
+let erroSensor = '-', permissaoGenerica = '-';
+/* quantos eventos de cada tipo o aparelho mandou - e o que o painel ?diag=1
+   mostra para separar "nao tem sensor" de "tem, mas o jogo nao usou" */
+const vistos = {deviceorientation:0, deviceorientationabsolute:0, devicemotion:0, semAlpha:0};
 
 /* uma fonte so assume se for pelo menos tao boa quanto a que ja esta mandando */
 function assumeFonte(nome, nivel){
@@ -968,6 +972,8 @@ function assumeFonte(nome, nivel){
 }
 
 function onOrientacao(e){
+  vistos[e.type] = (vistos[e.type] || 0) + 1;
+  if(e.alpha === null) vistos.semAlpha++;
   if(e.alpha === null && e.beta === null && e.gamma === null) return;
   const nivel = e.alpha === null ? 1 : (e.type === 'deviceorientation' ? 4 : 3);
   if(!assumeFonte(e.type, nivel)) return;
@@ -975,25 +981,49 @@ function onOrientacao(e){
   ori = {alpha:e.alpha || 0, beta:e.beta || 0, gamma:e.gamma || 0};
 }
 
-async function sensorDeQuaternion(){
-  const Classe = window.RelativeOrientationSensor || window.AbsoluteOrientationSensor;
-  if(!Classe) return;
-  try{
-    if(navigator.permissions && navigator.permissions.query){
-      const st = await Promise.all(['accelerometer','gyroscope'].map(
-        n => navigator.permissions.query({name:n}).catch(()=> ({state:'granted'}))));
-      if(st.some(s => s.state === 'denied')) return;
-    }
-    const s = new Classe({frequency:60, referenceFrame:'screen'});
+/* Tenta uma classe da Generic Sensor API. Resolve true no primeiro dado que
+   chegar, e false se ela der erro ou ficar muda - ai o proximo da fila tenta.
+   A ordem importa: a Relative depende de giroscopio de verdade; a Absolute
+   se vira com acelerometro + bussola, que e o que sobra em muito celular. */
+function tentaSensor(Classe, nome){
+  return new Promise(pronto=>{
+    let s;
+    try{ s = new Classe({frequency:60, referenceFrame:'screen'}); }
+    catch(e){ erroSensor = nome + ': ' + e.name; return pronto(false); }
+
+    let respondeu = false;
+    const desiste = ()=>{ try{ s.stop(); }catch(e){} pronto(false); };
+    const prazo = setTimeout(()=>{ if(!respondeu) { erroSensor = nome + ': mudo'; desiste(); } }, 2000);
+
     s.addEventListener('reading', ()=>{
       if(!s.quaternion) return;
-      if(!assumeFonte('OrientationSensor', 2)) return;
+      if(!respondeu){ respondeu = true; clearTimeout(prazo); pronto(true); }
+      if(!assumeFonte(nome, 2)) return;
       modoQuat = true;
       qDev.fromArray(s.quaternion);
     });
-    s.addEventListener('error', ()=>{});   // sem drama: os outros caminhos seguem
+    s.addEventListener('error', ev=>{
+      erroSensor = nome + ': ' + ((ev.error && ev.error.name) || 'erro');
+      if(!respondeu){ clearTimeout(prazo); desiste(); }
+    });
     s.start();
+  });
+}
+
+async function sensorDeQuaternion(){
+  try{
+    if(navigator.permissions && navigator.permissions.query){
+      const st = await Promise.all(['accelerometer','gyroscope'].map(
+        n => navigator.permissions.query({name:n}).catch(()=> ({state:'-'}))));
+      permissaoGenerica = st.map(s => s.state).join('/');
+      if(st.some(s => s.state === 'denied')) return;
+    }
   }catch(e){}
+
+  for(const nome of ['RelativeOrientationSensor', 'AbsoluteOrientationSensor']){
+    if(!window[nome]){ erroSensor = nome + ': nao existe'; continue; }
+    if(await tentaSensor(window[nome], nome)) return;
+  }
 }
 
 function aplicaSensor(){
@@ -1029,6 +1059,7 @@ let oscMax = 0;               // maior oscilacao ja vista, so para saber se o
                               // acelerometro esta mesmo vivo
 
 function onMovimento(e){
+  vistos.devicemotion++;
   const a = e.accelerationIncludingGravity || e.acceleration;
   if(!a || a.x === null) return;
   temMovimento = true;
@@ -1291,30 +1322,41 @@ function pedeSensor(){
   addEventListener('deviceorientation', onOrientacao);
   addEventListener('devicemotion', onMovimento);
 
-  /* se em 1,2 s nenhum dos dois trouxe uma orientacao completa, tentamos o
-     caminho novo (Generic Sensor API), que existe no Chrome do Android */
-  setTimeout(()=>{ if(nivelFonte < 3) sensorDeQuaternion(); }, 1200);
+  vigiaSensores();
+}
 
-  /* e se depois de 3 s nada respondeu, avisamos e devolvemos o joystick em vez
-     de deixar o jogador achando que o jogo travou */
-  setTimeout(()=>{
-    if(!document.body.classList.contains('toque')) return;
-    if(!temMovimento) document.body.classList.add('semPassos');
-    if(!usaSensor){
-      dicaEl.textContent = 'Este aparelho nao respondeu ao giroscopio - arraste o dedo na tela para olhar';
-    }else if(!temMovimento){
-      dicaEl.textContent = 'Gire o celular para olhar - joystick para andar - encare para interagir';
+/* Vigia: em vez de um aviso unico disparado uma vez e nunca mais revisto - que
+   ficava mentindo na tela se o sensor acordasse depois -, olha o estado a cada
+   segundo durante meio minuto e ajusta o que precisa. */
+function vigiaSensores(){
+  const t0 = performance.now();
+  let tentouGenerico = false;
+  const id = setInterval(()=>{
+    const t = performance.now() - t0;
+    const toque = document.body.classList.contains('toque');
+
+    /* se os eventos classicos nao trouxeram orientacao completa, chama a
+       Generic Sensor API - e o caminho que salva celular sem giroscopio */
+    if(t > 1200 && nivelFonte < 3 && !tentouGenerico){
+      tentouGenerico = true;
+      sensorDeQuaternion();
     }
-  }, 3000);
 
-  /* alguns aparelhos respondem ao devicemotion mas com leitura travada. Um
-     celular na mao sempre oscila mais que isso, entao se depois de 8 s a
-     oscilacao nunca passou de um sopro, o acelerometro nao serve: joystick. */
-  setTimeout(()=>{
-    if(!document.body.classList.contains('toque') || oscMax > .2) return;
-    document.body.classList.add('semPassos');
-    dicaEl.textContent = 'O acelerometro deste aparelho nao registra os passos - use o joystick';
-  }, 8000);
+    if(toque && t > 3000){
+      /* sem acelerometro (ou com ele travado) nao ha passo: devolve o joystick */
+      if(!temMovimento || (t > 8000 && oscMax <= .2)) document.body.classList.add('semPassos');
+      if(!usaSensor) document.body.classList.add('semPassos');
+
+      dicaEl.textContent = !usaSensor
+        ? 'Sem giroscopio aqui - arraste o dedo para olhar' +
+          (document.body.classList.contains('semPassos') ? ' e use o joystick para andar' : ' e ande de verdade para se mover')
+        : document.body.classList.contains('semPassos')
+          ? 'Gire o celular para olhar - joystick para andar - encare para interagir'
+          : 'Gire o celular para olhar - ande de verdade para se mover - encare para interagir';
+    }
+
+    if(t > 30000) clearInterval(id);
+  }, 1000);
 }
 
 /* Diagnostico: abra a pagina com ?diag=1 para ver o que o aparelho responde. */
@@ -1329,13 +1371,17 @@ if((location.search + location.hash).indexOf('diag') >= 0){
     d.textContent =
       'fonte    ' + (fonteSensor || 'nenhuma') + ' (nivel ' + nivelFonte + ')\n' +
       'leituras ' + leituras + '\n' +
+      'eventos  orient ' + vistos.deviceorientation +
+              ' / abs ' + vistos.deviceorientationabsolute +
+              ' / motion ' + vistos.devicemotion +
+              ' / sem alfa ' + vistos.semAlpha + '\n' +
       'alfa/beta/gama ' + ori.alpha.toFixed(0) + ' / ' + ori.beta.toFixed(0) + ' / ' + ori.gamma.toFixed(0) + '\n' +
       'quaternion ' + q + '\n' +
-      'devicemotion ' + temMovimento + '   passos ' + passos + '\n' +
-      'repouso ' + baseAcel.toFixed(1) + ' m/s2   pico ' + oscMax.toFixed(1) + '\n' +
-      'permissao ' + permissaoSensor + '\n' +
-      'DeviceOrientationEvent ' + (typeof DeviceOrientationEvent !== 'undefined') + '\n' +
-      'OrientationSensor ' + !!(window.RelativeOrientationSensor || window.AbsoluteOrientationSensor) + '\n' +
+      'passos ' + passos + '   repouso ' + baseAcel.toFixed(1) + '   pico ' + oscMax.toFixed(1) + '\n' +
+      'permissao ' + permissaoSensor + '   generic ' + permissaoGenerica + '\n' +
+      'sensor API ' + erroSensor + '\n' +
+      'classes  rel ' + !!window.RelativeOrientationSensor +
+             '  abs ' + !!window.AbsoluteOrientationSensor + '\n' +
       'https ' + isSecureContext + '   tela ' + ((screen.orientation && screen.orientation.angle) || 0) + 'graus';
   }, 250);
 }
