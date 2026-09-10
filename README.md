@@ -1,33 +1,30 @@
 # AR Explorer
 
-Mini-jogo de realidade aumentada que roda direto no navegador, sem build e sem
+Mini-jogo em primeira pessoa que roda direto no navegador, sem build e sem
 dependencia instalada (o Three.js vem por CDN). Tudo esta em `index.html`.
 
 **Jogue agora:** <https://dong0s.github.io/ar-explorer/>
 
-Esse endereco e https, entao a camera funciona tambem no celular — basta abrir
-o link e tocar em "Iniciar com a camera".
+O jogo **nao usa a camera**. O celular entra so como sensor de movimento: o
+giroscopio gira a cabeca dentro do jogo, e o fundo e sempre o cenario 3D
+montado no proprio `index.html`, nunca o ambiente real.
 
 ## Como rodar localmente
 
 ```bash
-node ar-game/server.js
+node server.js
 ```
 
 Depois abra <http://localhost:8080>.
 
-A camera do navegador so e liberada em `http://localhost` ou em `https://` — por isso
-o servidor local. Abrir o arquivo com duplo clique (`file://`) nao funciona.
-
-## Os tres modos de entrada
-
-| Botao | Quando aparece | O que faz |
-|---|---|---|
-| **Iniciar em AR real (WebXR)** | so quando o aparelho suporta `immersive-ar` (Chrome no Android, headsets) | AR de verdade: a posicao do seu corpo move a camera |
-| **Iniciar com a camera** | sempre | usa a camera traseira como fundo + giroscopio para olhar |
-| **Jogar sem camera (modo teste)** | sempre | fundo escuro, so mouse e teclado — bom para testar no PC |
+Como nao ha mais camera nem WebXR, abrir o `index.html` com duplo clique
+(`file://`) tambem funciona — o servidor local so e util para testar no celular
+pela rede.
 
 ## Como se joga
+
+Um botao so: **Jogar**. No celular ele pede permissao para os sensores de
+movimento (obrigatorio no iOS); se voce recusar, da para olhar arrastando o dedo.
 
 - **Olhar** — gire o celular (giroscopio) ou arraste o mouse no PC.
 - **Andar** — joystick no canto inferior esquerdo (toque) ou `W A S D` / setas (PC).
@@ -83,13 +80,8 @@ amb:1.8,                           // luz ambiente: quanto menor, mais dramatico
 chao:0x2f6b38,                     // cor do piso e do terreno
 ```
 
-Duas coisas mudam conforme o modo:
-
-- **No AR / com camera** o domo do ceu e o terreno amplo nao sao criados, e o
-  piso da area fica translucido — quem faz o papel de chao e de fundo e o seu
-  ambiente real, que aparece pela camera. Voce ve so as estruturas em volta,
-  como um cenario holografico sobreposto ao comodo.
-- **No modo sem camera** o domo e o terreno entram, fechando o mundo.
+O domo do ceu e o terreno amplo de 34 m entram sempre, fechando o mundo em
+volta do jogador — e o cenario que faz o fundo, em qualquer aparelho.
 
 As setas ficam sempre em `+X` e `-X`. A funcao `livre(angulo)` mantem um
 corredor limpo nessas duas direcoes, para o cenario nunca nascer na frente de
@@ -100,11 +92,12 @@ distribuem coisas em circulo.
 ## Testar no celular
 
 O jeito mais simples e abrir <https://dong0s.github.io/ar-explorer/> direto no
-celular: e https, entao o navegador libera a camera sem mais nada.
+celular.
 
-Para testar no celular uma versao **ainda nao publicada**, o servidor local nao
-serve (celular nao e `localhost`, e o navegador bloqueia a camera em
-`http://IP:8080`). Nesse caso:
+Para testar uma versao **ainda nao publicada**: o giroscopio, como a camera
+antes dele, so e liberado em `https://` ou `http://localhost` — entao
+`http://SEU_IP:8080` abre o jogo no celular, mas sem sensor (so o arraste do
+dedo funciona). Para testar com sensor:
 
 1. **Tunel https** — `npx localtunnel --port 8080` (ou ngrok) e abrir a URL https no celular.
 2. **Flag do Chrome** — em `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,

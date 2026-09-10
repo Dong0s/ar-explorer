@@ -14,8 +14,6 @@
   html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--fg);
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;user-select:none}
 
-  /* video da camera fica atras de tudo */
-  #cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000}
   canvas{position:fixed;inset:0;z-index:1}
 
   /* ---------- HUD ---------- */
@@ -83,8 +81,6 @@
 </head>
 <body>
 
-<video id="cam" playsinline muted autoplay></video>
-
 <div id="hud">
   <div id="topo">
     <div class="chip" id="chipArea">Area</div>
@@ -106,7 +102,7 @@
 
 <div id="start">
   <h1>AR <span>Explorer</span></h1>
-  <p class="sub">Um mini-jogo de realidade aumentada. Olhe ao redor pela camera, ande pela area
+  <p class="sub">Um mini-jogo em primeira pessoa. Gire o celular para olhar ao redor, ande pela area
      e descubra os objetos escondidos em cada cenario.</p>
   <div class="regras">
     <div><b class="num">1</b><span>Aponte a mira (o circulo no centro da tela) para um objeto e segure por ~1,2s para observa-lo.</span></div>
@@ -114,9 +110,7 @@
     <div><b class="num">3</b><span>Para trocar de cenario, encare uma <b>seta</b> por <b>3 segundos</b>.</span></div>
   </div>
   <div class="btns">
-    <button id="btnXR" class="primario" style="display:none">Iniciar em AR real (WebXR)</button>
-    <button id="btnCam" class="primario">Iniciar com a camera</button>
-    <button id="btnSem">Jogar sem camera (modo teste)</button>
+    <button id="btnJogar" class="primario">Jogar</button>
   </div>
   <div id="erro"></div>
 </div>
@@ -258,10 +252,9 @@ const rig    = new THREE.Group();   // "corpo" do jogador: e ele que anda
 rig.add(camera);
 cena.add(rig);
 
-const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
-renderer.xr.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 const hemi = new THREE.HemisphereLight(0xffffff, 0x404050, 2.0);
@@ -371,15 +364,14 @@ function montaSeta(paraDireita, cor){
 
 /* =========================================================================
    3B. CENARIO - o mundo em volta da area caminhavel
-   Nada aqui e interativo, e so ambientacao. As estruturas grandes ficam
-   translucidas para nao tapar a imagem da camera no modo AR.
+   Nada aqui e interativo, e so ambientacao. O domo do ceu e o terreno amplo
+   fecham o mundo: o fundo e sempre o cenario do jogo, nunca a camera real.
    ========================================================================= */
 const cenario = new THREE.Group();
 cena.add(cenario);
 
 let animados   = [];      // pecas do cenario que giram ou flutuam
 let particulas = null;    // poeira / polen / faiscas / estrelas
-let semCamera  = false;   // modo teste: so aí o domo do ceu aparece
 
 /* pseudo-aleatorio estavel: a mesma semente gera sempre o mesmo cenario */
 function rnd(s){ const x = Math.sin(s * 127.1) * 43758.5453; return x - Math.floor(x); }
@@ -711,13 +703,10 @@ function montaCenario(area){
   if(piso.material.map){ piso.material.map.dispose(); piso.material.map = null; }
   piso.visible = true;
   piso.material.color.setHex(area.chao);
-  piso.material.opacity = semCamera ? .95 : .45;
-  if(area.cenario === 'museu'){
-    /* no modo sem camera quem desenha o quadriculado e o terreno inteiro,
-       entao o disco do meio sai de cena para os dois nao brigarem */
-    if(semCamera) piso.visible = false;
-    else piso.material.map = texturaXadrez();
-  }
+  piso.material.opacity = .95;
+  /* no museu quem desenha o quadriculado e o terreno inteiro, entao o disco
+     do meio sai de cena para os dois nao brigarem */
+  if(area.cenario === 'museu') piso.visible = false;
   piso.material.needsUpdate = true;
 
   /* luz do cenario */
@@ -727,20 +716,17 @@ function montaCenario(area){
   sol.color.setHex(area.sol[0]);
   sol.intensity = area.sol[1];
 
-  /* Terreno amplo e domo do ceu so no modo sem camera: no AR quem faz esse
-     papel e o chao e o ambiente reais que aparecem pela camera. */
-  if(semCamera){
-    cenario.add(montaDomo(area.ceu[0], area.ceu[1]));
-    if(area.cenario !== 'espaco'){          // no espaco a plataforma flutua
-      const terreno = poe(new THREE.CircleGeometry(34, 48),
-                          mat(area.chao, {roughness:1}), 0, -.03, 0);
-      terreno.rotation.x = -Math.PI/2;
-      if(area.cenario === 'museu'){         // salao inteiro quadriculado
-        const t = texturaXadrez();
-        t.repeat.set(68, 68);               // mesmo tamanho de ladrilho do disco central
-        terreno.material.map = t;
-        terreno.material.color.setHex(0xffffff);
-      }
+  /* Terreno amplo e domo do ceu: e o que fecha o mundo em volta do jogador. */
+  cenario.add(montaDomo(area.ceu[0], area.ceu[1]));
+  if(area.cenario !== 'espaco'){            // no espaco a plataforma flutua
+    const terreno = poe(new THREE.CircleGeometry(34, 48),
+                        mat(area.chao, {roughness:1}), 0, -.03, 0);
+    terreno.rotation.x = -Math.PI/2;
+    if(area.cenario === 'museu'){           // salao inteiro quadriculado
+      const t = texturaXadrez();
+      t.repeat.set(68, 68);                 // mesmo tamanho de ladrilho do disco central
+      terreno.material.map = t;
+      terreno.material.color.setHex(0xffffff);
     }
   }
   CENARIOS[area.cenario]();
@@ -800,7 +786,7 @@ function carregaArea(i){
   montaCenario(area);
   limite.material.color.setHex(area.cor);
   grade.material.color.setHex(area.cor);
-  grade.material.opacity = semCamera ? .12 : .22;
+  grade.material.opacity = .12;
 
   /* objetos distribuidos em circulo ao redor do jogador */
   area.objetos.forEach((def, k)=>{
@@ -996,7 +982,7 @@ raio.far = 12;
 const vPos = new THREE.Vector3(), vDir = new THREE.Vector3();
 let alvo = null, tempoAlvo = 0;
 
-function camAtiva(){ return renderer.xr.isPresenting ? renderer.xr.getCamera() : camera; }
+function camAtiva(){ return camera; }
 
 function raizInterativa(obj){
   while(obj){
@@ -1083,12 +1069,14 @@ function anda(dt){
     vFrente.set(0, 0, -1).applyQuaternion(qTmp);
     vFrente.y = 0;
     vFrente.normalize();
-    vLado.crossVectors(vFrente, cima).normalize().negate();
+    /* frente x cima ja da o vetor "direita" da camera: com .negate() aqui o
+       A e o D (e o joystick) saiam trocados */
+    vLado.crossVectors(vFrente, cima).normalize();
     rig.position.addScaledVector(vFrente, fz * VELOCIDADE * dt);
     rig.position.addScaledVector(vLado,   fx * VELOCIDADE * dt);
   }
 
-  /* nao deixa sair da area (vale tambem quando voce anda de verdade no AR) */
+  /* nao deixa sair da area */
   camAtiva().getWorldPosition(cabeca);
   const d = Math.hypot(cabeca.x, cabeca.z);
   if(d > RAIO_AREA){
@@ -1108,10 +1096,8 @@ renderer.setAnimationLoop(()=>{
   const dt = Math.min(relogio.getDelta(), .05);
 
   if(rodando){
-    if(!renderer.xr.isPresenting){
-      if(usaSensor) aplicaSensor();
-      else { camera.rotation.y = yaw; camera.rotation.x = pitch; }
-    }
+    if(usaSensor) aplicaSensor();
+    else { camera.rotation.y = yaw; camera.rotation.x = pitch; }
     anda(dt);
     checaMira(dt);
 
@@ -1147,28 +1133,28 @@ addEventListener('resize', ()=>{
    ========================================================================= */
 const telaStart = document.getElementById('start');
 const erroEl    = document.getElementById('erro');
-const video     = document.getElementById('cam');
-const btnXR     = document.getElementById('btnXR');
-const btnCam    = document.getElementById('btnCam');
-const btnSem    = document.getElementById('btnSem');
+const btnJogar  = document.getElementById('btnJogar');
 
-if(navigator.xr && navigator.xr.isSessionSupported){
-  navigator.xr.isSessionSupported('immersive-ar')
-    .then(ok=>{ if(ok) btnXR.style.display = 'block'; })
-    .catch(()=>{});
-}
-
+/* O jogo NAO usa a camera. O celular entra so como sensor de movimento:
+   o giroscopio gira a cabeca, e o fundo e sempre o cenario montado aqui. */
 async function pedeSensor(){
+  /* iOS so entrega o giroscopio depois de um pedido feito dentro de um clique */
   if(typeof DeviceOrientationEvent !== 'undefined' &&
      typeof DeviceOrientationEvent.requestPermission === 'function'){
-    try{ await DeviceOrientationEvent.requestPermission(); }catch(e){}
+    try{
+      const ok = await DeviceOrientationEvent.requestPermission();
+      if(ok !== 'granted'){
+        erroEl.textContent = 'Sem permissao para os sensores de movimento: da para jogar ' +
+          'arrastando o dedo na tela para olhar.';
+      }
+    }catch(e){}
   }
   addEventListener('deviceorientation', onOrientacao);
 }
 
 function comeca(){
   telaStart.style.display = 'none';
-  camera.position.y = renderer.xr.isPresenting ? 0 : 1.6;
+  camera.position.y = 1.6;
   carregaArea(0);
   dicaEl.textContent = document.body.classList.contains('toque')
     ? 'Gire o celular para olhar - joystick para andar - encare para interagir'
@@ -1177,45 +1163,10 @@ function comeca(){
   bip(560, .1);
 }
 
-btnCam.addEventListener('click', async ()=>{
-  erroEl.textContent = 'Pedindo acesso a camera...';
-  try{
-    const s = await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}},
-      audio:false
-    });
-    video.srcObject = s;
-    await video.play();
-    await pedeSensor();
-    erroEl.textContent = '';
-    comeca();
-  }catch(e){
-    erroEl.textContent = 'Nao consegui abrir a camera (' + e.name + '). A camera so funciona em ' +
-      'https:// ou http://localhost. Use "Jogar sem camera" para testar.';
-  }
-});
-
-btnSem.addEventListener('click', async ()=>{
-  video.style.display = 'none';
-  semCamera = true;              // sem passthrough: o domo do ceu pode aparecer
+btnJogar.addEventListener('click', async ()=>{
+  erroEl.textContent = '';
   await pedeSensor();
   comeca();
-});
-
-btnXR.addEventListener('click', async ()=>{
-  try{
-    const sessao = await navigator.xr.requestSession('immersive-ar', {
-      requiredFeatures:['local-floor'],
-      optionalFeatures:['dom-overlay'],
-      domOverlay:{root:document.body}
-    });
-    video.style.display = 'none';
-    await renderer.xr.setSession(sessao);
-    sessao.addEventListener('end', ()=>{ rodando = false; telaStart.style.display = 'flex'; });
-    comeca();
-  }catch(e){
-    erroEl.textContent = 'WebXR nao iniciou (' + e.message + '). Tente "Iniciar com a camera".';
-  }
 });
 </script>
 </body>
