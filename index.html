@@ -924,19 +924,77 @@ addEventListener('pointermove', e=>{
 addEventListener('pointerup',    ()=> arrastando = false);
 addEventListener('pointercancel',()=> arrastando = false);
 
-/* -- giroscopio (celular) -- */
+/* -- olhar girando o proprio celular --------------------------------------
+   Nem todo aparelho entrega a orientacao pelo mesmo caminho, entao ha tres.
+   Cada fonte tem um nivel, e so a de nivel maior manda - se duas mandassem
+   juntas a imagem ficaria pulando entre as duas leituras:
+
+     4  deviceorientation COM alpha
+        o caminho classico. Unico que existe no iOS, e o mais estavel no
+        Android (nao depende da bussola, entao nao treme perto de metal).
+     3  deviceorientationabsolute COM alpha
+        em varios Androids so este dispara.
+     2  OrientationSensor (Generic Sensor API)
+        quaternion pronto do Android, ja corrigido pela rotacao da tela.
+        So entra em cena se os dois de cima ficarem mudos.
+     1  qualquer um dos dois SEM alpha
+        aparelho sem bussola: da para inclinar, mas o giro horizontal
+        fica preso. Serve so enquanto nada melhor aparece.
+
+   Se nada responder, o arraste do dedo continua valendo e o jogo avisa.     */
 const zee = new THREE.Vector3(0, 0, 1);
 const eul = new THREE.Euler();
 const q0  = new THREE.Quaternion();
 const q1  = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5));
+const qDev = new THREE.Quaternion();   // orientacao crua, quando vem em quaternion
 let ori = {alpha:0, beta:0, gamma:0};
+let fonteSensor = '', nivelFonte = 0, leituras = 0, modoQuat = false;
+
+/* uma fonte so assume se for pelo menos tao boa quanto a que ja esta mandando */
+function assumeFonte(nome, nivel){
+  if(nivel < nivelFonte) return false;
+  if(nome !== fonteSensor){ fonteSensor = nome; nivelFonte = nivel; leituras = 0; }
+  usaSensor = true;
+  leituras++;
+  return true;
+}
 
 function onOrientacao(e){
-  if(e.alpha === null || e.beta === null) return;
-  usaSensor = true;
-  ori = {alpha:e.alpha, beta:e.beta, gamma:e.gamma};
+  if(e.alpha === null && e.beta === null && e.gamma === null) return;
+  const nivel = e.alpha === null ? 1 : (e.type === 'deviceorientation' ? 4 : 3);
+  if(!assumeFonte(e.type, nivel)) return;
+  modoQuat = false;
+  ori = {alpha:e.alpha || 0, beta:e.beta || 0, gamma:e.gamma || 0};
 }
+
+async function sensorDeQuaternion(){
+  const Classe = window.RelativeOrientationSensor || window.AbsoluteOrientationSensor;
+  if(!Classe) return;
+  try{
+    if(navigator.permissions && navigator.permissions.query){
+      const st = await Promise.all(['accelerometer','gyroscope'].map(
+        n => navigator.permissions.query({name:n}).catch(()=> ({state:'granted'}))));
+      if(st.some(s => s.state === 'denied')) return;
+    }
+    const s = new Classe({frequency:60, referenceFrame:'screen'});
+    s.addEventListener('reading', ()=>{
+      if(!s.quaternion) return;
+      if(!assumeFonte('OrientationSensor', 2)) return;
+      modoQuat = true;
+      qDev.fromArray(s.quaternion);
+    });
+    s.addEventListener('error', ()=>{});   // sem drama: os outros caminhos seguem
+    s.start();
+  }catch(e){}
+}
+
 function aplicaSensor(){
+  if(modoQuat){
+    /* o quaternion vem no referencial da tela, com Z para cima; q1 gira esse
+       mundo para o Y-para-cima do three.js */
+    camera.quaternion.copy(q1).multiply(qDev);
+    return;
+  }
   const a = THREE.MathUtils.degToRad(ori.alpha);
   const b = THREE.MathUtils.degToRad(ori.beta);
   const g = THREE.MathUtils.degToRad(ori.gamma);
@@ -1137,19 +1195,56 @@ const btnJogar  = document.getElementById('btnJogar');
 
 /* O jogo NAO usa a camera. O celular entra so como sensor de movimento:
    o giroscopio gira a cabeca, e o fundo e sempre o cenario montado aqui. */
+let permissaoSensor = '-';
+
 async function pedeSensor(){
   /* iOS so entrega o giroscopio depois de um pedido feito dentro de um clique */
   if(typeof DeviceOrientationEvent !== 'undefined' &&
      typeof DeviceOrientationEvent.requestPermission === 'function'){
     try{
-      const ok = await DeviceOrientationEvent.requestPermission();
-      if(ok !== 'granted'){
+      permissaoSensor = await DeviceOrientationEvent.requestPermission();
+      if(permissaoSensor !== 'granted'){
         erroEl.textContent = 'Sem permissao para os sensores de movimento: da para jogar ' +
           'arrastando o dedo na tela para olhar.';
       }
-    }catch(e){}
+    }catch(e){ permissaoSensor = 'erro: ' + e.name; }
   }
+
+  /* varios Androids disparam so o "absolute"; o iOS so o outro. Ouvimos os dois. */
+  addEventListener('deviceorientationabsolute', onOrientacao);
   addEventListener('deviceorientation', onOrientacao);
+
+  /* se em 1,2 s nenhum dos dois trouxe uma orientacao completa, tentamos o
+     caminho novo (Generic Sensor API), que existe no Chrome do Android */
+  setTimeout(()=>{ if(nivelFonte < 3) sensorDeQuaternion(); }, 1200);
+
+  /* e se depois de 3 s nada respondeu, avisamos em vez de deixar o jogador
+     achando que o jogo travou */
+  setTimeout(()=>{
+    if(usaSensor || !document.body.classList.contains('toque')) return;
+    dicaEl.textContent = 'Este aparelho nao respondeu ao giroscopio - arraste o dedo na tela para olhar';
+  }, 3000);
+}
+
+/* Diagnostico: abra a pagina com ?diag=1 para ver o que o aparelho responde. */
+if((location.search + location.hash).indexOf('diag') >= 0){
+  const d = document.createElement('div');
+  d.style.cssText = 'position:fixed;left:8px;top:8px;z-index:20;background:rgba(0,0,0,.75);' +
+    'color:#8ef;font:11px/1.5 monospace;padding:8px 10px;border-radius:8px;max-width:78vw;' +
+    'pointer-events:none;white-space:pre';
+  document.body.appendChild(d);
+  setInterval(()=>{
+    const q = modoQuat ? [...qDev.toArray()].map(v=>v.toFixed(2)).join(' ') : '-';
+    d.textContent =
+      'fonte    ' + (fonteSensor || 'nenhuma') + ' (nivel ' + nivelFonte + ')\n' +
+      'leituras ' + leituras + '\n' +
+      'alfa/beta/gama ' + ori.alpha.toFixed(0) + ' / ' + ori.beta.toFixed(0) + ' / ' + ori.gamma.toFixed(0) + '\n' +
+      'quaternion ' + q + '\n' +
+      'permissao ' + permissaoSensor + '\n' +
+      'DeviceOrientationEvent ' + (typeof DeviceOrientationEvent !== 'undefined') + '\n' +
+      'OrientationSensor ' + !!(window.RelativeOrientationSensor || window.AbsoluteOrientationSensor) + '\n' +
+      'https ' + isSecureContext + '   tela ' + ((screen.orientation && screen.orientation.angle) || 0) + 'graus';
+  }, 250);
 }
 
 function comeca(){
